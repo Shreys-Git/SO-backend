@@ -1,15 +1,22 @@
 from contextlib import asynccontextmanager
 from enum import Enum
+from typing import List
 
 import httpx
 import base64
 
 from docusign_esign import ApiClient, EnvelopesApi, EnvelopeDefinition, TemplateRole
 from fastapi import FastAPI, Request
+from langchain_core.documents import Document
 from motor import motor_asyncio
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import TokenTextSplitter
+from sentence_transformers import SentenceTransformer
+
+
 
 from config import BaseConfig
 
@@ -45,6 +52,10 @@ app.add_middleware(
 class APIScope(Enum):
     ESIGNATURE = "signature"
     NAVIGATOR = "adm_store_unified_repo_read"
+
+# Load the embedding model (https://huggingface.co/nomic-ai/nomic-embed-text-v1")
+model = SentenceTransformer("nomic-ai/nomic-embed-text-v1", trust_remote_code=True)
+
 
 '''
 Re-directs User to the correct Docusign Sign In endpoint
@@ -208,4 +219,60 @@ async def get_nav_agreements():
     print(nav_agreements)
     return nav_agreements
 
+@app.get("/document/process")
+async def load_documents_endpoint(request: Request):
+    docs = await process_documents()
 
+    # Insert documents into the database
+    db = request.app.db[settings.DB_NAME]
+    collection = db["documents"]
+    added_doc = await collection.insert_many(docs)
+
+    return {"inserted_ids": [str(doc_id) for doc_id in added_doc.inserted_ids]}
+
+async def process_documents():
+    docs = await load_documents()
+    chunks = create_chunks_with_fixed_token_split(docs, 100, 0)
+
+    # Prepare documents for insertion
+    docs_to_insert = [
+        {
+            "text": chunk.page_content,
+            "embedding": get_embedding(chunk.page_content),
+        }
+        for chunk in chunks
+    ]
+
+    return docs_to_insert
+
+async def load_documents():
+    file_path = "./Credit-Agreement.pdf"
+
+    loader = PyPDFLoader(file_path)
+    pages = []
+    async for page in loader.alazy_load():
+        pages.append(page)
+
+    return pages
+
+def get_embedding(data):
+    """Generates vector embeddings for the given data."""
+    embedding = model.encode(data)
+    return embedding.tolist()
+
+def create_chunks_with_fixed_token_split(
+    docs: List[Document], chunk_size: int, chunk_overlap: int
+) -> List[Document]:
+    """
+    Fixed token chunking
+    Args:
+        docs (List[Document]): List of documents to chunk
+        chunk_size (int): Chunk size (number of tokens)
+        chunk_overlap (int): Token overlap between chunks
+    Returns:
+        List[Document]: List of chunked documents
+    """
+    splitter = TokenTextSplitter(
+        encoding_name="cl100k_base", chunk_size=chunk_size, chunk_overlap=chunk_overlap
+    )
+    return splitter.split_documents(docs)
