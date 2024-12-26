@@ -15,6 +15,8 @@ from starlette.responses import RedirectResponse
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import TokenTextSplitter
 from sentence_transformers import SentenceTransformer
+from huggingface_hub import InferenceClient
+
 
 
 
@@ -224,8 +226,8 @@ async def load_documents_endpoint(request: Request):
     docs = await process_documents()
 
     # Insert documents into the database
-    db = request.app.db[settings.DB_NAME]
-    collection = db["documents"]
+    db = request.app.db
+    collection = db[settings.COLLECTION_NAME]
     added_doc = await collection.insert_many(docs)
 
     return {"inserted_ids": [str(doc_id) for doc_id in added_doc.inserted_ids]}
@@ -255,11 +257,6 @@ async def load_documents():
 
     return pages
 
-def get_embedding(data):
-    """Generates vector embeddings for the given data."""
-    embedding = model.encode(data)
-    return embedding.tolist()
-
 def create_chunks_with_fixed_token_split(
     docs: List[Document], chunk_size: int, chunk_overlap: int
 ) -> List[Document]:
@@ -276,3 +273,132 @@ def create_chunks_with_fixed_token_split(
         encoding_name="cl100k_base", chunk_size=chunk_size, chunk_overlap=chunk_overlap
     )
     return splitter.split_documents(docs)
+
+def get_embedding(data):
+    """Generates vector embeddings for the given data."""
+    embedding = model.encode(data)
+    return embedding.tolist()
+
+@app.get("/searchIndex/create")
+async def create_vector_search_index(request: Request):
+
+    # Define the search index model
+    index_name = "vector_test_index"
+    search_index_model = {
+        "name": index_name,
+        "type": "vectorSearch",
+        "definition": {
+            "fields": [
+                {
+                    "type": "vector",
+                    "numDimensions": 768, # TODO: Add the correct number of Dimension (size Vector / Docs for the Embedding Model)
+                    "path": "embedding",
+                    "similarity": "cosine"
+                }
+            ]
+        }
+    }
+
+    # Create the search index
+    db = request.app.db
+    collection = db[settings.COLLECTION_NAME]
+    await collection.create_search_index(search_index_model)
+    print("Search index creation initiated.")
+    return {"result" : "success"}
+
+@app.get("/vector/search")
+async def search_vector_db(request: Request):
+    # Define the pipeline
+    pipeline = [
+        {
+            '$vectorSearch': {
+                'index': 'vector_test_index',
+                'path': 'embedding',
+                'queryVector': get_embedding("loan data"),  # Ensure get_embedding is compatible
+                'numCandidates': 100,
+                'limit': 10
+            }
+        },
+        {
+            '$project': {
+                '_id': 0,
+                'text': 1,
+                'score': {
+                    '$meta': 'vectorSearchScore'
+                }
+            }
+        }
+    ]
+
+    # Access the collection
+    db = request.app.db
+    collection = db[settings.COLLECTION_NAME]
+
+    # Run the aggregation pipeline
+    results = collection.aggregate(pipeline)
+
+    # Collect results asynchronously
+    search_results = []
+    async for res in results:
+        search_results.append(res)
+
+    # Return results
+    return {"Found Results": search_results}
+
+@app.get("/llm/chat")
+async def chat_llm(request: Request):
+    input_query = "loan data"
+
+    # Define the pipeline
+    pipeline = [
+        {
+            '$vectorSearch': {
+                'index': 'vector_test_index',
+                'path': 'embedding',
+                'queryVector': get_embedding(input_query),  # Ensure get_embedding is compatible
+                'numCandidates': 100,
+                'limit': 10
+            }
+        },
+        {
+            '$project': {
+                '_id': 0,
+                'text': 1,
+                'score': {
+                    '$meta': 'vectorSearchScore'
+                }
+            }
+        }
+    ]
+
+    # Access the collection
+    db = request.app.db
+    collection = db[settings.COLLECTION_NAME]
+
+    # Run the aggregation pipeline
+    results = collection.aggregate(pipeline)
+
+    # Collect results asynchronously
+    search_results = []
+    async for res in results:
+        search_results.append(res)
+
+    # Authenticate to Hugging Face and access the model
+    llm = InferenceClient(
+        "mistralai/Mistral-7B-Instruct-v0.3",
+        token= settings.HF_ACCESS_TOKEN)
+
+    # Prompt the LLM (this code varies depending on the model you use)
+    output = llm.chat_completion(
+        messages=[{"role": "user", "content": input_query}], #TODO: Send the context as a string + query Input in a formatted way to the LLM (RAG)
+        max_tokens=150
+    )
+
+
+    # Return results
+    return {"LLM Results": output.choices[0].message.content}
+
+
+
+
+

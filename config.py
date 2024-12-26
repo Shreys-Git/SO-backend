@@ -5,6 +5,7 @@ class BaseConfig(BaseSettings):
     # MongoDB Configs
     DB_URL: Optional[str]
     DB_NAME: Optional[str]
+    COLLECTION_NAME: Optional[str]
 
     # Docusign Configs
     INTEGRATION_KEY: Optional[str]
@@ -14,4 +15,7 @@ class BaseConfig(BaseSettings):
     API_ACCOUNT_ID: Optional[str]
     TEMPLATE_ID: Optional[str]
     model_config =  SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # Hugging Face LLM
+    HF_ACCESS_TOKEN: Optional[str]
 
