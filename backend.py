@@ -201,25 +201,39 @@ async def get_nav_access_token():
     # TODO: Combine the two endpoints later & send a query param to tell which access token is needed
     return RedirectResponse(url=build_redirect_url(False))
 
-@app.get("/navigator/agreements")
-async def get_nav_agreements():
-    # TODO: Make a post request to the Nav Endpoint
-
+@app.get("/navigator/agreements/{agreement_id}")
+async def get_nav_agreements(agreement_id: str = None):
     GET_ALL_NAV_AGREEMENTS_URL = f"https://api-d.docusign.com/v1/accounts/{settings.API_ACCOUNT_ID}/agreements"
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            GET_ALL_NAV_AGREEMENTS_URL,
-            headers={
-                "Authorization": f"Bearer {tokens["access_token"]}",
-                "Accept": "application/json"
-            },
-        )
-        agreements = response.json()
 
-    # Extract the data, which a list of the documents
-    nav_agreements = agreements.get("data")
-    print(nav_agreements)
-    return nav_agreements
+    if agreement_id != "ALL":
+        print(f"Id is present: {agreement_id}")
+        GET_ALL_NAV_AGREEMENTS_URL = f"https://api-d.docusign.com/v1/accounts/{settings.API_ACCOUNT_ID}/agreements/{agreement_id}"
+        print(f"The endpoint being called is: {GET_ALL_NAV_AGREEMENTS_URL}")
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                GET_ALL_NAV_AGREEMENTS_URL,
+                headers={
+                    "Authorization": f"Bearer {tokens['access_token']}",
+                    "Accept": "application/json"
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            print(f"HTTP error occurred: {e}")
+            return {"error": str(e)}
+
+    agreements = response.json()
+    nav_agreements = agreements.get("data", [])
+
+    if agreement_id != "ALL":
+        nav_agreements = agreements
+
+    if not nav_agreements:
+        print("No agreements found or `data` key missing in response.")
+
+    return {"agreements": nav_agreements}
 
 @app.get("/document/process")
 async def load_documents_endpoint(request: Request):
