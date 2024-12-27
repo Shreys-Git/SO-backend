@@ -1,3 +1,4 @@
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from enum import Enum
 from typing import List
@@ -25,6 +26,9 @@ from config import BaseConfig
 settings = BaseConfig()
 
 tokens = {}
+agreements_cache = {}
+# Initialize the stats dictionary
+agreements_stats = defaultdict(int)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -201,8 +205,111 @@ async def get_nav_access_token():
     # TODO: Combine the two endpoints later & send a query param to tell which access token is needed
     return RedirectResponse(url=build_redirect_url(False))
 
+
+@app.get("/navigator/agreements/stats")
+async def create_nav_agreement_stats():
+    agreements_response = await fetch_agreements("ALL")
+    agreements = agreements_response.get("agreements", [])
+
+    for agreement in agreements:
+        type_key = agreement.get("type", "type_missing")
+        agreements_stats[type_key] += 1
+        category_key = agreement.get("category", "category_missing")
+        agreements_stats[category_key] += 1
+
+        for party in agreement.get("parties", []):
+            party_key = party.get("name_in_agreement", "name_in_agreement_missing")
+            agreements_stats[party_key] += 1
+
+        for provision_key, provision_value in agreement.get("provisions", {}).items():
+            if provision_key == "effective_date":
+                effective_date_key = provision_value if provision_value else "effective_date_missing"
+                print(f"Effective Date Key: {effective_date_key}")
+                agreements_stats[effective_date_key] += 1
+
+            elif provision_key == "expiration_date":
+                expiration_date_key = provision_value if provision_value else "expiration_date_missing"
+                print(f"Expiration Date Key: {expiration_date_key}")
+                agreements_stats[expiration_date_key] += 1
+
+            elif provision_key == "execution_date":
+                execution_date_key = provision_value if provision_value else "execution_date_missing"
+                print(f"Execution Date Key: {execution_date_key}")
+                agreements_stats[execution_date_key] += 1
+
+            elif provision_key == "assignment_type":
+                assignment_type_key = provision_value if provision_value else "assignment_type_missing"
+                print(f"Assignment Type Key: {assignment_type_key}")
+                agreements_stats[assignment_type_key] += 1
+
+            elif provision_key == "assignment_termination_rights":
+                assignment_termination_rights_key = provision_value if provision_value else "assignment_termination_rights_missing"
+                print(f"Assignment Termination Rights Key: {assignment_termination_rights_key}")
+                agreements_stats[assignment_termination_rights_key] += 1
+
+            elif provision_key == "governing_law":
+                governing_law_key = provision_value if provision_value else "governing_law_missing"
+                print(f"Governing Law Key: {governing_law_key}")
+                agreements_stats[governing_law_key] += 1
+
+            elif provision_key == "jurisdiction":
+                jurisdiction_key = provision_value if provision_value else "jurisdiction_missing"
+                print(f"Jurisdiction Key: {jurisdiction_key}")
+                agreements_stats[jurisdiction_key] += 1
+
+            elif provision_key == "payment_terms_due_date":
+                payment_terms_due_date_key = provision_value if provision_value else "payment_terms_due_date_missing"
+                print(f"Payment Terms Due Date Key: {payment_terms_due_date_key}")
+                agreements_stats[payment_terms_due_date_key] += 1
+
+            elif provision_key == "can_charge_late_payment_fees":
+                can_charge_late_payment_fees_key = provision_value if provision_value else "can_charge_late_payment_fees_missing"
+                print(f"Can Charge Late Payment Fees Key: {can_charge_late_payment_fees_key}")
+                agreements_stats[can_charge_late_payment_fees_key] += 1
+
+            elif provision_key == "liability_cap_multiplier":
+                liability_cap_multiplier_key = provision_value if provision_value else "liability_cap_multiplier_missing"
+                print(f"Liability Cap Multiplier Key: {liability_cap_multiplier_key}")
+                agreements_stats[liability_cap_multiplier_key] += 1
+
+            elif provision_key == "liability_cap_duration":
+                liability_cap_duration_key = provision_value if provision_value else "liability_cap_duration_missing"
+                print(f"Liability Cap Duration Key: {liability_cap_duration_key}")
+                agreements_stats[liability_cap_duration_key] += 1
+
+            elif provision_key == "renewal_type":
+                renewal_type_key = provision_value if provision_value else "renewal_type_missing"
+                print(f"Renewal Type Key: {renewal_type_key}")
+                agreements_stats[renewal_type_key] += 1
+
+            elif provision_key == "termination_period_for_cause":
+                termination_period_for_cause_key = provision_value if provision_value else "termination_period_for_cause_missing"
+                print(f"Termination Period for Cause Key: {termination_period_for_cause_key}")
+                agreements_stats[termination_period_for_cause_key] += 1
+
+            elif provision_key == "termination_period_for_convenience":
+                termination_period_for_convenience_key = provision_value if provision_value else "termination_period_for_convenience_missing"
+                print(f"Termination Period for Convenience Key: {termination_period_for_convenience_key}")
+                agreements_stats[termination_period_for_convenience_key] += 1
+
+            else:
+                print(f"Unhandled Provision Key: {provision_key}, Value: {provision_value}")
+
+        for language in agreement.get("languages", []):
+            language_key = language
+            agreements_stats[language_key] += 1
+
+    return agreements_stats
+
+
 @app.get("/navigator/agreements/{agreement_id}")
 async def get_nav_agreements(agreement_id: str = None):
+    agreements = await fetch_agreements(agreement_id)
+    if "agreements" not in agreements_cache:
+        agreements_cache["agreements"] = agreements
+    return agreements
+
+async def fetch_agreements(agreement_id: str):
     GET_ALL_NAV_AGREEMENTS_URL = f"https://api-d.docusign.com/v1/accounts/{settings.API_ACCOUNT_ID}/agreements"
 
     if agreement_id != "ALL":
@@ -234,6 +341,7 @@ async def get_nav_agreements(agreement_id: str = None):
         print("No agreements found or `data` key missing in response.")
 
     return {"agreements": nav_agreements}
+
 
 @app.get("/document/process")
 async def load_documents_endpoint(request: Request):
