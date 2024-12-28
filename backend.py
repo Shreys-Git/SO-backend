@@ -533,7 +533,7 @@ async def chat_llm(request: Request):
 
     # Access the collection
     db = request.app.db
-    collection = db[settings.COLLECTION_NAME]
+    collection = db[settings.VECTOR_COLLECTION_NAME]
 
     # Run the aggregation pipeline
     results = collection.aggregate(pipeline)
@@ -558,6 +558,62 @@ async def chat_llm(request: Request):
     # Return results
     return {"LLM Results": output.choices[0].message.content}
 
+
+class UserChatMessage(BaseModel):
+    message: str
+
+@app.post("/llm/chat")
+async def chat_llm(request: Request, use_chat_message: UserChatMessage):
+    input_query = use_chat_message.message
+    print("User Query is: " + input_query)
+    # Define the pipeline
+    pipeline = [
+        {
+            '$vectorSearch': {
+                'index': 'vector_test_index',
+                'path': 'embedding',
+                'queryVector': get_embedding(input_query),  # Ensure get_embedding is compatible
+                'numCandidates': 100,
+                'limit': 10
+            }
+        },
+        {
+            '$project': {
+                '_id': 0,
+                'text': 1,
+                'score': {
+                    '$meta': 'vectorSearchScore'
+                }
+            }
+        }
+    ]
+
+    # Access the collection
+    db = request.app.db
+    collection = db[settings.VECTOR_COLLECTION_NAME]
+
+    # Run the aggregation pipeline
+    results = collection.aggregate(pipeline)
+
+    # Collect results asynchronously
+    search_results = []
+    async for res in results:
+        search_results.append(res)
+
+    # Authenticate to Hugging Face and access the model
+    llm = InferenceClient(
+        "mistralai/Mistral-7B-Instruct-v0.3",
+        token= settings.HF_ACCESS_TOKEN)
+
+    # Prompt the LLM (this code varies depending on the model you use)
+    output = llm.chat_completion(
+        messages=[{"role": "user", "content": input_query}], #TODO: Send the context as a string + query Input in a formatted way to the LLM (RAG)
+        max_tokens=150
+    )
+
+
+    # Return results
+    return {"LLM Results": output.choices[0].message.content}
 
 
 
