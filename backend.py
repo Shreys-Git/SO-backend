@@ -611,9 +611,9 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
         max_tokens=150
     )
 
-
+    print("The AI Response is: " + output.choices[0].message.content)
     # Return results
-    return {"LLM Results": output.choices[0].message.content}
+    return {"AIResponse": output.choices[0].message.content}
 
 
 
