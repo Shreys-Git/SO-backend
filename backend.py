@@ -6,6 +6,9 @@ from typing import List
 import httpx
 import base64
 
+import os
+from pathlib import Path
+
 from docusign_esign import ApiClient, EnvelopesApi, EnvelopeDefinition, TemplateRole
 from fastapi import FastAPI, Request
 from langchain_core.documents import Document
@@ -301,9 +304,29 @@ async def create_nav_agreement_stats():
 
     return agreements_stats
 
+'''
+Fetches all the docs processed by Nav API
+Stores them in MongoDB 
+'''
+@app.get("/navigator/agreements/process")
+async def process_nav_agreements(request: Request):
+    agreements_response = await fetch_agreements("ALL")
+    agreements = agreements_response.get("agreements", [])
+
+    if "agreements" not in agreements_cache:
+        agreements_cache["agreements"] = agreements
+
+    # Insert documents into the database
+    db = request.app.db
+    collection = db[settings.NAV_COLLECTION_NAME]
+    added_doc = await collection.insert_many(agreements)
+
+    return {"inserted_ids": [str(doc_id) for doc_id in added_doc.inserted_ids]}
+
 
 @app.get("/navigator/agreements/{agreement_id}")
 async def get_nav_agreements(agreement_id: str = None):
+    #TODO: Don't fetch the doc before checking the cache -> Stale cache ? (Only fixed amt of docs in the Nav Docs)
     agreements = await fetch_agreements(agreement_id)
     if "agreements" not in agreements_cache:
         agreements_cache["agreements"] = agreements
@@ -342,14 +365,18 @@ async def fetch_agreements(agreement_id: str):
 
     return {"agreements": nav_agreements}
 
-
-@app.get("/document/process")
+'''
+Loads the documents from Pdf Location
+Creates Embeddings from the documents 
+Stores into the MongoDB database
+'''
+@app.get("/pdf/document/process")
 async def load_documents_endpoint(request: Request):
     docs = await process_documents()
 
     # Insert documents into the database
     db = request.app.db
-    collection = db[settings.COLLECTION_NAME]
+    collection = db[settings.VECTOR_COLLECTION_NAME]
     added_doc = await collection.insert_many(docs)
 
     return {"inserted_ids": [str(doc_id) for doc_id in added_doc.inserted_ids]}
@@ -370,14 +397,25 @@ async def process_documents():
     return docs_to_insert
 
 async def load_documents():
-    file_path = "./Credit-Agreement.pdf"
+    folder_path = "./SampleAgreements"
+    # Find all PDF files recursively in the given folder
+    pdf_files = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.lower().endswith(".pdf"):  # Ensure case-insensitive match for .pdf
+                pdf_files.append(Path(root) / file)
 
-    loader = PyPDFLoader(file_path)
-    pages = []
-    async for page in loader.alazy_load():
-        pages.append(page)
+    # Load each PDF file and collect pages
+    all_pages = []
+    for file_path in pdf_files:
+        loader = PyPDFLoader(str(file_path))
+        pages = []
+        async for page in loader.alazy_load():
+            pages.append(page)
+        all_pages.extend(pages)  # Add pages from this document to the overall list
 
-    return pages
+    return all_pages
+
 
 def create_chunks_with_fixed_token_split(
     docs: List[Document], chunk_size: int, chunk_overlap: int
@@ -423,7 +461,7 @@ async def create_vector_search_index(request: Request):
 
     # Create the search index
     db = request.app.db
-    collection = db[settings.COLLECTION_NAME]
+    collection = db[settings.VECTOR_COLLECTION_NAME]
     await collection.create_search_index(search_index_model)
     print("Search index creation initiated.")
     return {"result" : "success"}
@@ -454,7 +492,7 @@ async def search_vector_db(request: Request):
 
     # Access the collection
     db = request.app.db
-    collection = db[settings.COLLECTION_NAME]
+    collection = db[settings.VECTOR_COLLECTION_NAME]
 
     # Run the aggregation pipeline
     results = collection.aggregate(pipeline)
