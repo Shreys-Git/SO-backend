@@ -627,12 +627,25 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
 @app.get("/google/calendar")
 async def add_tasks_to_google_calendar():
     SCOPES = ["https://www.googleapis.com/auth/calendar"]
-    # Create the flow using the client secrets file from the Google API
-    # Console.
-    flow = Flow.from_client_secrets_file(
-        './google_client_secret.json',
-        scopes=SCOPES, # TODO: Check if it's just calendar
-        redirect_uri='urn:ietf:wg:oauth:2.0:oob')
+
+    google_auth_config = {
+        "web": {
+            "client_id": settings.GOOGLE_CLIENT_ID,
+            "project_id": settings.GOOGLE_PROJECT_ID,
+            "auth_uri": settings.GOOGLE_AUTH_URI,
+            "token_uri": settings.GOOGLE_TOKEN_URI,
+            "auth_provider_x509_cert_url": settings.GOOGLE_AUTH_PROVIDER_CERT,
+            "client_secret": settings.GOOGLE_CLIENT_SECRET,
+            "redirect_uris": [
+                settings.GOOGLE_REDIRECT_URI
+            ]
+        }
+    }
+    flow = Flow.from_client_config(
+        client_config = google_auth_config,
+        scopes=SCOPES,
+        redirect_uri='urn:ietf:wg:oauth:2.0:oob'
+    )
 
     # Tell the user to go to the authorization URL.
     auth_url, _ = flow.authorization_url(prompt='consent')
