@@ -8,6 +8,14 @@ import base64
 
 import os
 from pathlib import Path
+import datetime
+import os.path
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from docusign_esign import ApiClient, EnvelopesApi, EnvelopeDefinition, TemplateRole
 from fastapi import FastAPI, Request
@@ -614,6 +622,59 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     print("The AI Response is: " + output.choices[0].message.content)
     # Return results
     return {"AIResponse": output.choices[0].message.content}
+
+
+@app.get("/google/calendar")
+async def add_tasks_to_google_calendar():
+    SCOPES = ["https://www.googleapis.com/auth/calendar"]
+    # Create the flow using the client secrets file from the Google API
+    # Console.
+    flow = Flow.from_client_secrets_file(
+        './google_client_secret.json',
+        scopes=SCOPES, # TODO: Check if it's just calendar
+        redirect_uri='urn:ietf:wg:oauth:2.0:oob')
+
+    # Tell the user to go to the authorization URL.
+    auth_url, _ = flow.authorization_url(prompt='consent')
+
+    print('Please go to this URL: {}'.format(auth_url))
+
+    # The user will get an authorization code. This code is used to get the
+    # access token.
+    code = input('Enter the authorization code: ')
+    flow.fetch_token(code=code)
+    print()
+
+    try:
+        service = build("calendar", "v3", credentials=flow.credentials)
+
+        # Call the Calendar API
+        now = datetime.datetime.utcnow().isoformat() + "Z"  # 'Z' indicates UTC time
+        print("Getting the upcoming 10 events")
+        events_result = (
+            service.events()
+            .list(
+                calendarId="primary",
+                timeMin=now,
+                maxResults=10,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        events = events_result.get("items", [])
+
+        if not events:
+            print("No upcoming events found.")
+            return
+
+        # Prints the start and name of the next 10 events
+        for event in events:
+            start = event["start"].get("dateTime", event["start"].get("date"))
+            print(start, event["summary"])
+
+    except HttpError as error:
+        print(f"An error occurred: {error}")
 
 
 
