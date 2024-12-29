@@ -686,6 +686,53 @@ async def add_tasks_to_google_calendar():
             start = event["start"].get("dateTime", event["start"].get("date"))
             print(start, event["summary"])
 
+        event = {
+            "summary": "My Python Event",
+            "location": "Somewhere Online",
+            "description": "Some more details on this awesome event",
+            "colorId": 6,
+            "start": {
+                "dateTime": "2024-12-31T09:00:00+02:00",
+                "timeZone": "Europe/Vienna"
+            },
+            "end": {
+                "dateTime": "2024-12-31T17:00:00+02:00",
+                "timeZone": "Europe/Vienna"
+            },
+            "recurrence": [
+                "RRULE:FREQ=DAILY;COUNT=3"
+            ],
+            "attendees": [
+                {"email": "social@neuralnine.com"},
+                {"email": "someemailthathopefullydoesnotexist@mail.com"}
+            ]
+        }
+
+        # event = {
+        #     "summary": "test event",
+        #     "location": "800 Howard St., San Francisco, CA 94103",
+        #     "description": "A chance to hear more about Google's developer products.",
+        #     "start":
+        #         {
+        #             "datetime": "2024-12-31T09:00:00-07:00",
+        #             "timezone": "America/Los_Angeles",
+        #         },
+        #     "end":
+        #         {
+        #             "datetime": "2024-12-31T17:00:00-07:00",
+        #             "timezone": "America/Los_Angeles",
+        #         },
+        #     "recurrence": [{"RRULE:FREQ=DAILY;COUNT=2"}],
+        #
+        #     "attendees": [
+        #         {"email": "lpage@example.com"},
+        #         {"email": "sbrin@example.com"}
+        #     ],
+        # }
+
+        event = service.events().insert(calendarId="primary", body = event).execute()
+        print("Event created: %s\n", event.get('htmlLink'))
+
     except HttpError as error:
         print(f"An error occurred: {error}")
 
