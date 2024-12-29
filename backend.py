@@ -654,6 +654,8 @@ async def add_tasks_to_google_calendar():
 
     # The user will get an authorization code. This code is used to get the
     # access token.
+    # TODO: Check if there's a better way around this where the user doesn't have to paste the code in the console
+    # TODO: Also, fix the re-direct URL - should bring user back to the localhost page with Success Message
     code = input('Enter the authorization code: ')
     flow.fetch_token(code=code)
     print()
@@ -707,28 +709,6 @@ async def add_tasks_to_google_calendar():
                 {"email": "someemailthathopefullydoesnotexist@mail.com"}
             ]
         }
-
-        # event = {
-        #     "summary": "test event",
-        #     "location": "800 Howard St., San Francisco, CA 94103",
-        #     "description": "A chance to hear more about Google's developer products.",
-        #     "start":
-        #         {
-        #             "datetime": "2024-12-31T09:00:00-07:00",
-        #             "timezone": "America/Los_Angeles",
-        #         },
-        #     "end":
-        #         {
-        #             "datetime": "2024-12-31T17:00:00-07:00",
-        #             "timezone": "America/Los_Angeles",
-        #         },
-        #     "recurrence": [{"RRULE:FREQ=DAILY;COUNT=2"}],
-        #
-        #     "attendees": [
-        #         {"email": "lpage@example.com"},
-        #         {"email": "sbrin@example.com"}
-        #     ],
-        # }
 
         event = service.events().insert(calendarId="primary", body = event).execute()
         print("Event created: %s\n", event.get('htmlLink'))
