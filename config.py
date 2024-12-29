@@ -20,3 +20,12 @@ class BaseConfig(BaseSettings):
     # Hugging Face LLM
     HF_ACCESS_TOKEN: Optional[str]
 
+    # Google Configs
+    GOOGLE_CLIENT_ID: Optional[str]
+    GOOGLE_PROJECT_ID: Optional[str]
+    GOOGLE_AUTH_URI: Optional[str]
+    GOOGLE_TOKEN_URI: Optional[str]
+    GOOGLE_AUTH_PROVIDER_CERT: Optional[str]
+    GOOGLE_CLIENT_SECRET: Optional[str]
+    GOOGLE_REDIRECT_URI: Optional[str]
+
