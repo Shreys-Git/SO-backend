@@ -764,7 +764,7 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     #
     # documents = [document_1, document_2, document_3]
 
-    ids = vector_store.add_documents(documents=chunks)
+    # ids = vector_store.add_documents(documents=chunks)
 
     retriever = vector_store.as_retriever(
         search_type="similarity",
