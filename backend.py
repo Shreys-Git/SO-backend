@@ -17,6 +17,9 @@ from googleapiclient.errors import HttpError
 
 from docusign_esign import ApiClient, EnvelopesApi, EnvelopeDefinition, TemplateRole
 from fastapi import FastAPI, Request
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains.retrieval import create_retrieval_chain
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from langchain_mongodb import MongoDBAtlasVectorSearch
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
@@ -42,6 +45,7 @@ settings = BaseConfig()
 
 tokens = {}
 agreements_cache = {}
+chat_history =[]
 # Initialize the stats dictionary
 agreements_stats = defaultdict(int)
 
@@ -722,6 +726,7 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     # Return results
     return {"AIResponse": response}
 
+
 @app.post("/llm/chat/v3")
 async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     input_query = use_chat_message.message
@@ -764,6 +769,7 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     #
     # documents = [document_1, document_2, document_3]
 
+    # Documentation on CRUD: https://api.python.langchain.com/en/latest/vectorstores/langchain_mongodb.vectorstores.MongoDBAtlasVectorSearch.html
     # ids = vector_store.add_documents(documents=chunks)
 
     retriever = vector_store.as_retriever(
@@ -801,7 +807,37 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
         llm, retriever, contextualize_q_prompt
     )
 
-    return {"ids" : ids}
+    system_prompt = (
+        "You are an assistant for question-answering tasks. "
+        "Use the following pieces of retrieved context to answer "
+        "the question. If you don't know the answer, say that you "
+        "don't know. Use three sentences maximum and keep the "
+        "answer concise."
+        "\n\n"
+        "{context}"
+    )
+
+    qa_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+
+    ai_msg = rag_chain.invoke({"input": input_query, "chat_history": chat_history})
+    chat_history.extend(
+        [
+            HumanMessage(content=input_query),
+            AIMessage(content=ai_msg["answer"]),
+        ]
+    )
+
+    return {"response" : ai_msg}
 
 
 @app.get("/google/calendar")
