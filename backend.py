@@ -727,10 +727,10 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     input_query = use_chat_message.message
     print("User Query is: " + input_query)
 
-    # One time set up for the Vector Store create
-    folder_path = "./SampleAgreements/Sample Documents for Navigator/Others"
-    docs = await load_documents(folder_path)
-    chunks = create_chunks_with_recursive_split(docs, 1000, 200)
+    # # One time set up for the Vector Store create
+    # folder_path = "./SampleAgreements/Sample Documents for Navigator/Others"
+    # docs = await load_documents(folder_path)
+    # chunks = create_chunks_with_recursive_split(docs, 1000, 200)
 
     # Create the vector store
     hf_embeddings = HuggingFaceEndpointEmbeddings(
@@ -758,13 +758,48 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
         embedding=hf_embeddings,
         index_name="vector_test_index_30",
     )
-    document_1 = Document(page_content="foo", metadata={"baz": "bar"})
-    document_2 = Document(page_content="thud", metadata={"bar": "baz"})
-    document_3 = Document(page_content="i will be deleted :(")
+    # document_1 = Document(page_content="foo", metadata={"baz": "bar"})
+    # document_2 = Document(page_content="thud", metadata={"bar": "baz"})
+    # document_3 = Document(page_content="i will be deleted :(")
+    #
+    # documents = [document_1, document_2, document_3]
 
-    documents = [document_1, document_2, document_3]
+    ids = vector_store.add_documents(documents=chunks)
 
-    ids = vector_store.add_documents(documents=documents)
+    retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 3}
+    )
+
+    contextualize_q_system_prompt = (
+        "Given a chat history and the latest user question "
+        "which might reference context in the chat history, "
+        "formulate a standalone question which can be understood "
+        "without the chat history. Do NOT answer the question, "
+        "just reformulate it if needed and otherwise return it as is."
+    )
+
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+
+    repo_id = "mistralai/Mistral-7B-Instruct-v0.3"
+
+    llm = HuggingFaceEndpoint(
+        repo_id=repo_id,
+        max_new_tokens=512,
+        temperature=0.5,
+        huggingfacehub_api_token= settings.HF_ACCESS_TOKEN,
+    )
+
+    history_aware_retriever = create_history_aware_retriever(
+        llm, retriever, contextualize_q_prompt
+    )
 
     return {"ids" : ids}
 
