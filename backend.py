@@ -11,14 +11,20 @@ from pathlib import Path
 import datetime
 import os.path
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from docusign_esign import ApiClient, EnvelopesApi, EnvelopeDefinition, TemplateRole
 from fastapi import FastAPI, Request
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains.retrieval import create_retrieval_chain
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_huggingface import HuggingFaceEndpointEmbeddings
+from langchain_mongodb import MongoDBAtlasVectorSearch
+from langchain.chains.history_aware_retriever import create_history_aware_retriever
+from langchain.retrievers import SelfQueryRetriever
+from pymongo import MongoClient
 from langchain_core.documents import Document
 from motor import motor_asyncio
 from pydantic import BaseModel
@@ -26,11 +32,12 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import RedirectResponse
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import TokenTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import InferenceClient
-
-
-
+from langchain_huggingface import HuggingFaceEndpoint
+from langchain.chains import LLMChain
+from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
 
 from config import BaseConfig
 
@@ -38,6 +45,7 @@ settings = BaseConfig()
 
 tokens = {}
 agreements_cache = {}
+chat_history =[]
 # Initialize the stats dictionary
 agreements_stats = defaultdict(int)
 
@@ -71,7 +79,8 @@ class APIScope(Enum):
     NAVIGATOR = "adm_store_unified_repo_read"
 
 # Load the embedding model (https://huggingface.co/nomic-ai/nomic-embed-text-v1")
-model = SentenceTransformer("nomic-ai/nomic-embed-text-v1", trust_remote_code=True)
+model_name = "nomic-ai/nomic-embed-text-v1"
+model = SentenceTransformer(model_name, trust_remote_code=True)
 
 
 '''
@@ -331,7 +340,11 @@ async def process_nav_agreements(request: Request):
 
     return {"inserted_ids": [str(doc_id) for doc_id in added_doc.inserted_ids]}
 
-
+'''
+Can get specific agreements from the NAV Api Directly 
+Use the keyword ALL to get all the documents in the NAV Api
+N.B: Does not persist them to MongoDB 
+'''
 @app.get("/navigator/agreements/{agreement_id}")
 async def get_nav_agreements(agreement_id: str = None):
     #TODO: Don't fetch the doc before checking the cache -> Stale cache ? (Only fixed amt of docs in the Nav Docs)
@@ -390,8 +403,9 @@ async def load_documents_endpoint(request: Request):
     return {"inserted_ids": [str(doc_id) for doc_id in added_doc.inserted_ids]}
 
 async def process_documents():
-    docs = await load_documents()
-    chunks = create_chunks_with_fixed_token_split(docs, 100, 0)
+    folder_path = "./SampleAgreements/Sample Documents for Navigator/Others"
+    docs = await load_documents(folder_path)
+    chunks = create_chunks_with_recursive_split(docs, 1000, 200)
 
     # Prepare documents for insertion
     docs_to_insert = [
@@ -402,10 +416,28 @@ async def process_documents():
         for chunk in chunks
     ]
 
+
     return docs_to_insert
 
-async def load_documents():
-    folder_path = "./SampleAgreements"
+def load_documents_sync(folder_path: str):
+    # Find all PDF files recursively in the given folder
+    pdf_files = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.lower().endswith(".pdf"):  # Ensure case-insensitive match for .pdf
+                pdf_files.append(Path(root) / file)
+
+    all_pages = []
+    for file_path in pdf_files:
+        loader = PyPDFLoader(str(file_path))
+        pages = []
+        for page in loader.load():
+            pages.append(page)
+        all_pages.extend(pages)  # Add pages from this document to the overall list
+
+    return all_pages
+
+async def load_documents(folder_path: str):
     # Find all PDF files recursively in the given folder
     pdf_files = []
     for root, dirs, files in os.walk(folder_path):
@@ -442,6 +474,14 @@ def create_chunks_with_fixed_token_split(
     )
     return splitter.split_documents(docs)
 
+def create_chunks_with_recursive_split(docs: List[Document], chunk_size: int, chunk_overlap: int) -> List[Document]:
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    texts = text_splitter.split_documents(docs)
+
+    return texts
+
+
+
 def get_embedding(data):
     """Generates vector embeddings for the given data."""
     embedding = model.encode(data)
@@ -451,7 +491,7 @@ def get_embedding(data):
 async def create_vector_search_index(request: Request):
 
     # Define the search index model
-    index_name = "vector_test_index"
+    index_name = "vector_test_index_30"
     search_index_model = {
         "name": index_name,
         "type": "vectorSearch",
@@ -474,15 +514,16 @@ async def create_vector_search_index(request: Request):
     print("Search index creation initiated.")
     return {"result" : "success"}
 
-@app.get("/vector/search")
-async def search_vector_db(request: Request):
+@app.get("/vector/search/{user_query}")
+async def search_vector_db(request: Request, user_query: str):
+    print("The User Query for the Vector Search is : " + user_query)
     # Define the pipeline
     pipeline = [
         {
             '$vectorSearch': {
-                'index': 'vector_test_index',
+                'index': 'vector_test_index_30',
                 'path': 'embedding',
-                'queryVector': get_embedding("loan data"),  # Ensure get_embedding is compatible
+                'queryVector': get_embedding(user_query),
                 'numCandidates': 100,
                 'limit': 10
             }
@@ -521,7 +562,7 @@ async def chat_llm(request: Request):
     pipeline = [
         {
             '$vectorSearch': {
-                'index': 'vector_test_index',
+                'index': 'vector_test_index_30',
                 'path': 'embedding',
                 'queryVector': get_embedding(input_query),  # Ensure get_embedding is compatible
                 'numCandidates': 100,
@@ -578,7 +619,7 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     pipeline = [
         {
             '$vectorSearch': {
-                'index': 'vector_test_index',
+                'index': 'vector_test_index_30',
                 'path': 'embedding',
                 'queryVector': get_embedding(input_query),  # Ensure get_embedding is compatible
                 'numCandidates': 100,
@@ -622,6 +663,181 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     print("The AI Response is: " + output.choices[0].message.content)
     # Return results
     return {"AIResponse": output.choices[0].message.content}
+
+@app.post("/llm/chat/v2")
+async def chat_llm(request: Request, use_chat_message: UserChatMessage):
+    input_query = use_chat_message.message
+    print("User Query is: " + input_query)
+    # Define the pipeline
+    pipeline = [
+        {
+            '$vectorSearch': {
+                'index': 'vector_test_index_30',
+                'path': 'embedding',
+                'queryVector': get_embedding(input_query),  # Ensure get_embedding is compatible
+                'numCandidates': 20,
+                'limit': 2
+            }
+        },
+        {
+            '$project': {
+                '_id': 0,
+                'text': 1,
+                'score': {
+                    '$meta': 'vectorSearchScore'
+                }
+            }
+        }
+    ]
+
+    # Access the collection
+    db = request.app.db
+    collection = db[settings.VECTOR_COLLECTION_NAME]
+
+    # Run the aggregation pipeline
+    results = collection.aggregate(pipeline)
+
+    # Collect results asynchronously
+    search_results = []
+    async for res in results:
+        search_results.append(res.get("text", ""))
+
+    llm_context = " ".join(search_results)
+
+    template = f"""Question: {input_query}
+    Answer using the following context: {llm_context}. 
+    If you don't find the answer, say I don't know please."""
+
+    prompt = PromptTemplate.from_template(template)
+
+    repo_id = "mistralai/Mistral-7B-Instruct-v0.3"
+
+    llm = HuggingFaceEndpoint(
+        repo_id=repo_id,
+        max_new_tokens=512,
+        temperature=0.5,
+        huggingfacehub_api_token= settings.HF_ACCESS_TOKEN,
+    )
+
+    llm_chain = prompt | llm
+    response = llm_chain.invoke({"input_query": input_query, "llm_context" : llm_context})
+    print(response)
+
+    # Return results
+    return {"AIResponse": response}
+
+
+@app.post("/llm/chat/v3")
+async def chat_llm(request: Request, use_chat_message: UserChatMessage):
+    input_query = use_chat_message.message
+    print("User Query is: " + input_query)
+
+    # # One time set up for the Vector Store create
+    # folder_path = "./SampleAgreements/Sample Documents for Navigator/Others"
+    # docs = await load_documents(folder_path)
+    # chunks = create_chunks_with_recursive_split(docs, 1000, 200)
+
+    # Create the vector store
+    hf_embeddings = HuggingFaceEndpointEmbeddings(
+        model= "sentence-transformers/all-mpnet-base-v2",
+        model_kwargs = {"trust_remote_code": True},
+        task="feature-extraction",
+        huggingfacehub_api_token=settings.HF_ACCESS_TOKEN,
+    )
+
+    # Access the collection
+    client = MongoClient(settings.DB_URL)
+    db_name = settings.DB_NAME
+    collection_name = "ShrsingTestVSCollection"
+    collection = client[db_name][collection_name]
+
+    # Create the vector store asynchronously
+    # vector_store = MongoDBAtlasVectorSearch.from_documents(
+    #     documents=chunks,
+    #     embedding=hf_embeddings,
+    #     collection=collection,
+    #     index_name="vector_test_index_30"
+    # )
+    vector_store = MongoDBAtlasVectorSearch(
+        collection=collection,
+        embedding=hf_embeddings,
+        index_name="vector_test_index_30",
+    )
+    # document_1 = Document(page_content="foo", metadata={"baz": "bar"})
+    # document_2 = Document(page_content="thud", metadata={"bar": "baz"})
+    # document_3 = Document(page_content="i will be deleted :(")
+    #
+    # documents = [document_1, document_2, document_3]
+
+    # Documentation on CRUD: https://api.python.langchain.com/en/latest/vectorstores/langchain_mongodb.vectorstores.MongoDBAtlasVectorSearch.html
+    # ids = vector_store.add_documents(documents=chunks)
+
+    retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 3}
+    )
+
+    contextualize_q_system_prompt = (
+        "Given a chat history and the latest user question "
+        "which might reference context in the chat history, "
+        "formulate a standalone question which can be understood "
+        "without the chat history. Do NOT answer the question, "
+        "just reformulate it if needed and otherwise return it as is."
+    )
+
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+
+    repo_id = "mistralai/Mistral-7B-Instruct-v0.3"
+
+    llm = HuggingFaceEndpoint(
+        repo_id=repo_id,
+        max_new_tokens=512,
+        temperature=0.5,
+        huggingfacehub_api_token= settings.HF_ACCESS_TOKEN,
+    )
+
+    history_aware_retriever = create_history_aware_retriever(
+        llm, retriever, contextualize_q_prompt
+    )
+
+    system_prompt = (
+        "You are an assistant for question-answering tasks. "
+        "Use the following pieces of retrieved context to answer "
+        "the question. If you don't know the answer, say that you "
+        "don't know. Use three sentences maximum and keep the "
+        "answer concise."
+        "\n\n"
+        "{context}"
+    )
+
+    qa_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+
+    ai_msg = rag_chain.invoke({"input": input_query, "chat_history": chat_history})
+    chat_history.extend(
+        [
+            HumanMessage(content=input_query),
+            AIMessage(content=ai_msg["answer"]),
+        ]
+    )
+
+    return {"response" : ai_msg}
 
 
 @app.get("/google/calendar")
