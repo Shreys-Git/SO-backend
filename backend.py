@@ -1,7 +1,9 @@
+import operator
+import re
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from enum import Enum
-from typing import List
+from typing import List, TypedDict, Annotated
 
 import httpx
 import base64
@@ -19,7 +21,12 @@ from googleapiclient.errors import HttpError
 
 from docusign_esign import ApiClient, EnvelopesApi, EnvelopeDefinition, TemplateRole
 from fastapi import FastAPI, Request
+from langchain_community.chat_models import ChatOpenAI
+from langchain_core.agents import AgentAction
 from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from motor import motor_asyncio
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
@@ -28,6 +35,8 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import TokenTextSplitter
 from sentence_transformers import SentenceTransformer
 from huggingface_hub import InferenceClient
+from langchain_core.tools import tool
+
 
 
 
@@ -622,6 +631,146 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     print("The AI Response is: " + output.choices[0].message.content)
     # Return results
     return {"AIResponse": output.choices[0].message.content}
+
+class AgentState(TypedDict):
+    input: str
+    chat_history: list[BaseMessage]
+    intermediate_steps: Annotated[list[tuple[AgentAction, str]], operator.add]
+
+import requests
+# our regex
+abstract_pattern = re.compile(
+    r'<blockquote class="abstract mathjax">\s*<span class="descriptor">Abstract:</span>\s*(.*?)\s*</blockquote>',
+    re.DOTALL
+)
+# @tool("fetch_arxiv")
+# def fetch_arxiv(arxiv_id: str):
+#     """Gets the abstract from an ArXiv paper given the arxiv ID. Useful for
+#     finding high-level context about a specific paper."""
+#     # get paper page in html
+#     res = requests.get(
+#         f"https://export.arxiv.org/abs/{arxiv_id}"
+#     )
+#     # search html for abstract
+#     re_match = abstract_pattern.search(res.text)
+#     # return abstract text
+#     return re_match.group(1)
+
+@tool("format_string")
+def format_string(input_string: str):
+    """
+    Given a User Input String, it formats it and returns it.
+    Useful for returning response to the user
+    """
+    return "Your cute lil string is : " + input_string + "\n You're welcome !"
+
+@tool("final_answer")
+def final_answer(
+    introduction: str,
+    research_steps: str,
+    main_body: str,
+    conclusion: str,
+    sources: str
+):
+    """Returns a natural language response to the user in the form of a research
+    report. There are several sections to this report, those are:
+    - `introduction`: a short paragraph introducing the user's question and the
+    topic we are researching.
+    - `research_steps`: a few bullet points explaining the steps that were taken
+    to research your report.
+    - `main_body`: this is where the bulk of high quality and concise
+    information that answers the user's question belongs. It is 3-4 paragraphs
+    long in length.
+    - `conclusion`: this is a short single paragraph conclusion providing a
+    concise but sophisticated view on what was found.
+    - `sources`: a bulletpoint list provided detailed sources for all information
+    referenced during the research process
+    """
+    if type(research_steps) is list:
+        research_steps = "\n".join([f"- {r}" for r in research_steps])
+    if type(sources) is list:
+        sources = "\n".join([f"- {s}" for s in sources])
+    return ""
+
+# define a function to transform intermediate_steps from list
+# of AgentAction to scratchpad string
+def create_scratchpad(intermediate_steps: list[AgentAction]):
+    research_steps = []
+    for i, action in enumerate(intermediate_steps):
+        if action.log != "TBD":
+            # this was the ToolExecution
+            research_steps.append(
+                f"Tool: {action.tool}, input: {action.tool_input}\n"
+                f"Output: {action.log}"
+            )
+    return "\n---\n".join(research_steps)
+
+@app.get("/agent")
+async def use_langgraph_agent():
+    system_prompt = """You are the oracle, the great AI decision maker.
+    Given the user's query you must decide what to do with it based on the
+    list of tools provided to you.
+
+    If you see that a tool has been used (in the scratchpad) with a particular
+    query, do NOT use that same tool with the same query again. Also, do NOT use
+    any tool more than twice (ie, if the tool appears in the scratchpad twice, do
+    not use it again).
+
+    You should aim to collect information from a diverse range of sources before
+    providing the answer to the user. Once you have collected plenty of information
+    to answer the user's question (stored in the scratchpad) use the final_answer
+    tool."""
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("user", "{input}"),
+        ("assistant", "scratchpad: {scratchpad}"),
+    ])
+
+    tools = [
+        format_string,
+        final_answer
+    ]
+
+    llm = HuggingFaceEndpoint(
+        repo_id="HuggingFaceH4/zephyr-7b-beta",
+        task="text-generation",
+        max_new_tokens=512,
+        do_sample=False,
+        repetition_penalty=1.03,
+        huggingfacehub_api_token=settings.HF_ACCESS_TOKEN
+    )
+
+    # # Authenticate to Hugging Face and access the model
+    # llm = InferenceClient(
+    #     "mistralai/Mistral-7B-Instruct-v0.3",
+    #     token= settings.HF_ACCESS_TOKEN)
+    # Reference: https://python.langchain.com/docs/integrations/chat/huggingface/
+    chat_model = ChatHuggingFace(llm=llm) # Todo: If this does not work, try the HuggingFaceEndpoint fn
+
+
+    oracle = (
+            {
+                "input": lambda x: x["input"],
+                "chat_history": lambda x: x["chat_history"],
+                "scratchpad": lambda x: create_scratchpad(
+                    intermediate_steps=x["intermediate_steps"]
+                ),
+            }
+            | prompt
+            | chat_model.bind_tools(tools=tools)
+    )
+    inputs = {
+        "input": "tell me something interesting about dogs",
+        "chat_history": [],
+        "intermediate_steps": [],
+    }
+    out = oracle.invoke(inputs)
+
+    return {"Response: ": out}
+
+
 
 
 @app.get("/google/calendar")
