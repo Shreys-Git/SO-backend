@@ -29,3 +29,6 @@ class BaseConfig(BaseSettings):
     GOOGLE_CLIENT_SECRET: Optional[str]
     GOOGLE_REDIRECT_URI: Optional[str]
 
+    # Langgraph tools
+    TAVILY_API_KEY: Optional[str]
+
