@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi import Request
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
-from langchain_text_splitters import TokenTextSplitter
+from langchain_text_splitters import TokenTextSplitter, RecursiveCharacterTextSplitter
 from pathlib import Path
 import os
 
@@ -34,7 +34,8 @@ async def load_documents_endpoint(request: Request):
 
 async def process_documents():
     docs = await load_documents()
-    chunks = create_chunks_with_fixed_token_split(docs, 100, 0)
+    chunks = create_chunks_with_recursive_split(docs, 100, 0)
+
 
     # Prepare documents for insertion
     docs_to_insert = [
@@ -84,6 +85,11 @@ def create_chunks_with_fixed_token_split(
         encoding_name="cl100k_base", chunk_size=chunk_size, chunk_overlap=chunk_overlap
     )
     return splitter.split_documents(docs)
+
+def create_chunks_with_recursive_split(docs: List[Document], chunk_size: int, chunk_overlap: int) -> List[Document]:
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+    texts = text_splitter.split_documents(docs)
+    return texts
 
 
 
