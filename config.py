@@ -31,4 +31,5 @@ class BaseConfig(BaseSettings):
 
     # Langgraph tools
     TAVILY_API_KEY: Optional[str]
+    STRIPE_API_KEY: Optional[str]
 

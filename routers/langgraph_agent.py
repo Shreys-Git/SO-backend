@@ -48,6 +48,18 @@ def rag(user_query: str):
     # TODO: Check if tools need to return the o/p in a specific format - don't think so tbh
     return "RAG Results"
 
+@tool("Stripe")
+def stripe():
+    """
+    Useful for processing payments
+    """
+    stripe_base_endpoint = "https://api.stripe.com"
+    balance_endpoint = stripe_base_endpoint + "/v1/balance"
+
+    pass
+
+
+
 
 @agent_router.get("/langgraph/tools/test/{user_query}")
 def langraph_tools_test(user_query: str):
