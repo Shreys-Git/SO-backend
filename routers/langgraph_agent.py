@@ -11,6 +11,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import START, END
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
+import stripe
+from starlette.responses import RedirectResponse
+from fastapi import Request
+
 
 from config import BaseConfig
 
@@ -48,23 +52,35 @@ def rag(user_query: str):
     # TODO: Check if tools need to return the o/p in a specific format - don't think so tbh
     return "RAG Results"
 
-@tool("Stripe")
-def stripe():
+def stripe_test():
     """
     Useful for processing payments
     """
-    stripe_base_endpoint = "https://api.stripe.com"
-    balance_endpoint = stripe_base_endpoint + "/v1/balance"
-
-    pass
-
+    try:
+        stripe.api_key = 'sk_test_51QdJ6YPsHVuECJNRZqdnGKziIrQ6TP00h2D0knFskqzgHfIyoCPOEG3SMQUMey2zNCxTEdm2DsSSvO1Kk2CN3CpZ00n5MUMEDj'
+        checkout_session = stripe.checkout.Session.create(
+            line_items=[
+                {
+                    # Provide the exact Price ID (for example, pr_1234) of the product you want to sell
+                    'price': 'price_1QdX7mPsHVuECJNRqo1mMpAI',
+                    'quantity': 1,
+                },
+            ],
+            mode='payment',
+            success_url="http://localhost:5173/" + '?success=true',
+            cancel_url= "http://localhost:5173/" + '?canceled=true',
+        )
+        return checkout_session
+    except Exception as e:
+        return str(e)
 
 
 
 @agent_router.get("/langgraph/tools/test/{user_query}")
 def langraph_tools_test(user_query: str):
-    return web_search(user_query)
-
+    checkout_session = stripe_test()
+    print(checkout_session, "\n", checkout_session.url)
+    return RedirectResponse(url = checkout_session.url)
 
 
 @agent_router.get("/langgraph/chat")
