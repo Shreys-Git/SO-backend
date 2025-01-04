@@ -4,12 +4,13 @@ from typing import TypedDict, Annotated
 from fastapi.routing import APIRouter
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_core.agents import AgentAction
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.tools import tool
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import START, END
-from langgraph.graph import StateGraph
+from langgraph.graph import StateGraph, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 import stripe
 from starlette.responses import RedirectResponse
@@ -26,9 +27,7 @@ stripe.api_key = settings.STRIPE_API_KEY
 langgraph agent tutorial:
 '''
 class State(TypedDict):
-    input: str
-    chat_history: list[BaseMessage]
-    intermediate_steps: Annotated[list[tuple[AgentAction, str]], operator.add]
+    messages: Annotated[list, add_messages]
 
 '''
 Tools 
@@ -106,10 +105,7 @@ def langgraph_agent_chat():
     llm_endpoint = HuggingFaceEndpoint(
         repo_id="HuggingFaceH4/zephyr-7b-beta",
         huggingfacehub_api_token=settings.HF_ACCESS_TOKEN,
-        task="text-generation",
-        max_new_tokens=512,
-        do_sample=False,
-        repetition_penalty=1.03
+        task="text-generation"
     )
 
     memory = MemorySaver()
@@ -124,11 +120,18 @@ def langgraph_agent_chat():
     tools = [rag, web_search]
     #tool.invoke("What's a 'node' in LangGraph?")
 
-    llm = ChatHuggingFace(llm=llm_endpoint)
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0,
+        max_tokens=None,
+        max_retries=1,
+        api_key=settings.OPENAI_SECRET_KEY,
+    )
     llm_with_tools = llm.bind_tools(tools=tools) # TODO: figure out tool_choice='auto'/'any' equivalent for HF Chat Models
+    print("Test" + llm_with_tools.invoke("Hello, how are you?").content + "\n\n")
 
     def chatbot(state: State):
-        return {"chat_history": [llm_with_tools.invoke(state["chat_history"])]}
+        return {"messages":llm_with_tools.invoke(state['messages'])}
 
     # The first argument is the unique node name
     # The second argument is the function or object that will be called whenever
@@ -137,6 +140,7 @@ def langgraph_agent_chat():
 
     tool_node = ToolNode(tools=[tool])
     graph_builder.add_node("tools", tool_node)
+    graph_builder.add_edge("tools", "chatbot")
 
     graph_builder.add_conditional_edges(
         "chatbot",
@@ -149,8 +153,10 @@ def langgraph_agent_chat():
     graph = graph_builder.compile(checkpointer=memory)
 
     config = {"configurable": {"thread_id": "1"}}
+    graph.invoke({"messages": {"role": "user", "content": "Hi!"}}, config=config)
 
     user_input = "Hi there! My name is Will."
+
 
     # # The config is the **second positional argument** to stream() or invoke()!
     # events = graph.stream(
@@ -161,26 +167,27 @@ def langgraph_agent_chat():
 
     # Chat functionality
     # TODO: To check how the model can be stopped for relevant Human Inputs
-    def stream_graph_updates(user_input: str):
-        for event in graph.stream({"chat_history": [("user", user_input)]}, config):
-            for value in event.values():
-                print("Assistant:", value["chat_history"][-1].content)
-
-
-    while True:
-        try:
-            user_input = input("User: ")
-            if user_input.lower() in ["quit", "exit", "q"]:
-                print("Goodbye!")
-                break
-
-            stream_graph_updates(user_input)
-        except:
-            # fallback if input() is not available
-            user_input = "What do you know about LangGraph?"
-            print("User: " + user_input)
-            stream_graph_updates(user_input)
-            break
+    # def stream_graph_updates(user_input: str):
+    #     print("Shreyash Test Print ----------------- \n" + graph.invoke({"chat_history": [("user", user_input)]}, config))
+    #     for event in graph.stream({"chat_history": [("user", user_input)]}, config):
+    #         for value in event.values():
+    #             print("Assistant:", value["chat_history"][-1].content)
+    #
+    #
+    # while True:
+    #     try:
+    #         user_input = input("User: ")
+    #         if user_input.lower() in ["quit", "exit", "q"]:
+    #             print("Goodbye!")
+    #             break
+    #
+    #         stream_graph_updates(user_input)
+    #     except:
+    #         # fallback if input() is not available
+    #         user_input = "What do you know about LangGraph?"
+    #         print("User: " + user_input)
+    #         stream_graph_updates(user_input)
+    #         break
 
 # TODO: Use the Oracle Set up
 # TODO: Use Fixed Egde to force the model to format the results before the END state
