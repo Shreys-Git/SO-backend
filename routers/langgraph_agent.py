@@ -20,7 +20,7 @@ from config import BaseConfig
 
 agent_router = APIRouter()
 settings = BaseConfig()
-stripe.api_key = 'sk_test_51QdJ6YPsHVuECJNRZqdnGKziIrQ6TP00h2D0knFskqzgHfIyoCPOEG3SMQUMey2zNCxTEdm2DsSSvO1Kk2CN3CpZ00n5MUMEDj'
+stripe.api_key = settings.STRIPE_API_KEY
 
 '''
 langgraph agent tutorial:
@@ -53,7 +53,11 @@ def rag(user_query: str):
     # TODO: Check if tools need to return the o/p in a specific format - don't think so tbh
     return "RAG Results"
 
-def process_stripe_payment():
+@tool("Process Payments")
+def process_payments():
+    """
+    Useful for requesting and receiving payments for obligations which need them.
+    """
     product_id = create_stripe_payment_product("test shrey loan")
     price_id = create_stripe_payment_price(product_id, 250)
     return generate_stripe_payment_link(price_id)
@@ -91,7 +95,7 @@ def generate_stripe_payment_link(price_id: str):
 
 @agent_router.get("/langgraph/tools/test/{user_query}")
 def langraph_tools_test(user_query: str):
-    return RedirectResponse(url = process_stripe_payment())
+    return RedirectResponse(url = process_payments())
 
 
 @agent_router.get("/langgraph/chat")
