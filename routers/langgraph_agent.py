@@ -11,11 +11,16 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import START, END
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
+import stripe
+from starlette.responses import RedirectResponse
+from fastapi import Request
+
 
 from config import BaseConfig
 
 agent_router = APIRouter()
 settings = BaseConfig()
+stripe.api_key = 'sk_test_51QdJ6YPsHVuECJNRZqdnGKziIrQ6TP00h2D0knFskqzgHfIyoCPOEG3SMQUMey2zNCxTEdm2DsSSvO1Kk2CN3CpZ00n5MUMEDj'
 
 '''
 langgraph agent tutorial:
@@ -48,11 +53,45 @@ def rag(user_query: str):
     # TODO: Check if tools need to return the o/p in a specific format - don't think so tbh
     return "RAG Results"
 
+def process_stripe_payment():
+    product_id = create_stripe_payment_product("test shrey loan")
+    price_id = create_stripe_payment_price(product_id, 250)
+    return generate_stripe_payment_link(price_id)
+
+def create_stripe_payment_product(name: str, description: str = "loan info"):
+    product = stripe.Product.create(name=name, description=description)
+    return product.id
+
+def create_stripe_payment_price(product_id: str, amount: int):
+    price = stripe.Price.create(  product= product_id, unit_amount= amount, currency="usd")
+    return price.id
+
+def generate_stripe_payment_link(price_id: str):
+    """
+    Useful for processing payments
+    """
+    try:
+        checkout_session = stripe.checkout.Session.create(
+            line_items=[
+                {
+                    # Provide the exact Price ID (for example, pr_1234) of the product you want to sell
+                    'price': price_id,
+                    'quantity': 1,
+                },
+            ],
+            mode='payment',
+            success_url="http://localhost:5173/" + '?success=true',
+            cancel_url= "http://localhost:5173/" + '?canceled=true',
+        )
+        return checkout_session.url
+    except Exception as e:
+        return str(e)
+
+
 
 @agent_router.get("/langgraph/tools/test/{user_query}")
 def langraph_tools_test(user_query: str):
-    return web_search(user_query)
-
+    return RedirectResponse(url = process_stripe_payment())
 
 
 @agent_router.get("/langgraph/chat")
