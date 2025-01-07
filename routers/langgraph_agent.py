@@ -90,7 +90,18 @@ def generate_stripe_payment_link(price_id: str):
     except Exception as e:
         return str(e)
 
-
+@agent_router.get("/langgraph/contractAgent")
+def langgraph_contract_agent():
+    # Step -1: Use the user query to identify the most relevant template (RAG v/s Template)
+        # MVP: Just make the LLM identify the type of template from the list of templates from the DB(CUDA) -> User Template
+    # Step -2: Gather Info
+        # Classify the information into one of three buckets ( User to provide - Web Search - Calculated from user / on its own)
+        # Use tools + Custom routing (Semantic + Above Classification) : 1. RAG (on user data) 2. Email to ask questions 3. Financial Calculators and APIs (sep agent?)
+        #  4. Web search 5. Legal Resources Online APIs 6. Metadata analyse (location, time, year)
+    # Step -3: Human - In - the loop:
+        # Send an editable doc to the reviewer via Email and then let them control what and how changes need to come in
+        # MVP+ : User can invite multiple people to review and approve the docs
+    pass
 
 @agent_router.get("/langgraph/tools/test/{user_query}")
 def langraph_tools_test(user_query: str):
