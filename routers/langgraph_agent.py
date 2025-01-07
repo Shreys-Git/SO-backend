@@ -99,8 +99,12 @@ def langgraph_contract_agent():
         # Use tools + Custom routing (Semantic + Above Classification) : 1. RAG (on user data) 2. Email to ask questions 3. Financial Calculators and APIs (sep agent?)
         #  4. Web search 5. Legal Resources Online APIs 6. Metadata analyse (location, time, year)
     # Step -3: Human - In - the loop:
-        # Send an editable doc to the reviewer via Email and then let them control what and how changes need to come in
+        # MVP can just be input prompts from the user on the changes to be made
+        # Next: Send an editable doc to the reviewer via Email and then let them control what and how changes need to come in
         # MVP+ : User can invite multiple people to review and approve the docs
+
+    # Edge Cases to Consider: Preventing PII leaks here and the tone of the documents when requesting and getting information
+    # The PII translation must not be a tool and separate hard-coded step in the process
     pass
 
 @agent_router.get("/langgraph/tools/test/{user_query}")
