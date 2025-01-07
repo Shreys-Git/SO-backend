@@ -98,6 +98,7 @@ def langgraph_contract_agent():
         # Classify the information into one of three buckets ( User to provide - Web Search - Calculated from user / on its own)
         # Use tools + Custom routing (Semantic + Above Classification) : 1. RAG (on user data) 2. Email to ask questions 3. Financial Calculators and APIs (sep agent?)
         #  4. Web search 5. Legal Resources Online APIs 6. Metadata analyse (location, time, year)
+        # Financial API reference: https://site.financialmodelingprep.com/developer/docs ( probably not free )
     # Step -3: Human - In - the loop:
         # MVP can just be input prompts from the user on the changes to be made
         # Next: Send an editable doc to the reviewer via Email and then let them control what and how changes need to come in
