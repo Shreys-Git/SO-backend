@@ -20,6 +20,9 @@ class BaseConfig(BaseSettings):
     # Hugging Face LLM
     HF_ACCESS_TOKEN: Optional[str]
 
+    # Open AI
+    OPENAI_SECRET_KEY: Optional[str]
+
     # Google Configs
     GOOGLE_CLIENT_ID: Optional[str]
     GOOGLE_PROJECT_ID: Optional[str]
