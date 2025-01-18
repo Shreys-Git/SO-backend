@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from motor import motor_asyncio
 from starlette.middleware.cors import CORSMiddleware
 from routers.RAG import rag_router
+from routers.contract import contract_router
 from routers.google import google_router
 from routers.langgraph_agent import agent_router
 from routers.mongo import router as mongo_router
@@ -41,3 +42,4 @@ app.include_router(docusign_router, prefix="/docusign", tags=["docusign"])
 app.include_router(google_router, prefix="/google", tags=["google"])
 app.include_router(rag_router, prefix="/RAG", tags=["RAG"])
 app.include_router(agent_router, prefix="/agent", tags=["agent"])
+app.include_router(contract_router, prefix="/contract", tags=["agent"])
