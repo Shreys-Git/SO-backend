@@ -3,7 +3,28 @@ from pydantic import BaseModel
 
 from config import BaseConfig
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
+import asyncio
+import operator
+from typing_extensions import TypedDict
+from typing import  Annotated, List, Optional, Literal
+from pydantic import BaseModel, Field
+
+from tavily import TavilyClient, AsyncTavilyClient
+
 from langchain_openai import ChatOpenAI
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from difflib import unified_diff
+
+from langchain_core.runnables import RunnableConfig
+from IPython.display import Markdown
+
+from langgraph.constants import Send
+from langgraph.graph import START, END, StateGraph
+from langsmith import traceable
+from difflib import Differ
+import re
+
 
 contract_router = APIRouter()
 settings = BaseConfig()
@@ -27,39 +48,118 @@ def langgraph_contract_agent(user_prompt: UserPrompt):
     return {"llmContent" : response }
 
 class EditInput(BaseModel):
-    change: str
-    document: str
+    prompt: str
+    agreement: str
+
+class AIEdit(BaseModel):
+  original_agreement_text: str = Field(
+        description="Contains the exact original legal agreememt provided by the user",
+    )
+  updated_agreement_text: str = Field(
+        description="Contains the updated response",
+    )
+  update_summary: str = Field(
+        description="Summary of the changes made described using bullet points",
+    )
+
+class SectionState(TypedDict):
+    section: AIEdit
+    prompt: str
+    agreement_text: str
+    updated_agreement_text: str
+
+# Magic Edit instructions
+magic_edit_instructions="""You are an expert law analyst editing a legal agreement based on the instructions given to you.
+
+Change Instructions:
+{prompt}
+
+Legal Agreement:
+{agreement}
+
+Guidelines for writing:
+
+1. Technical Accuracy:
+- Use technical terminology precisely
+
+2. Length and Style:
+- Keep the suggested changes word length similar to the original document
+- No marketing language
+- Technical focus
+- Write in simple, clear language
+
+3. Writing Approach:
+- Use concrete details over general statements
+- Make every word count
+- No preamble prior to creating the section content
+- Focus on your single most important point
+
+4. Quality Checks:
+- No preamble prior to creating the section content"""
+
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    temperature=0,
+    max_tokens=None,
+    max_retries=1,
+    api_key=settings.OPENAI_SECRET_KEY,
+)
+
+def update_agreement(state: SectionState):
+    """ Update a section of the report """
+
+    # Get state
+    agreement = state["agreement_text"]
+    prompt = state["prompt"]
+
+    # Format system instructions
+    system_instructions = magic_edit_instructions.format(prompt=prompt, agreement=agreement)
+
+    # Update section
+    section_content = llm.with_structured_output(AIEdit).invoke([SystemMessage(content=system_instructions)]+[HumanMessage(content="Update the given documents based on the provided input")])
+    return {"response": section_content}
+
+def find_differences(original_text, updated_text):
+    lines1 = original_text.splitlines()
+    lines2 = updated_text.splitlines()
+
+    # Create a Differ object and compare the lines
+    differ = Differ()
+    diff = differ.compare(lines1, lines2)
+
+    formatted_diffs = []
+    for line in diff:
+        if not line.startswith("?"):
+            formatted_diffs.append(line)
+        if line.strip() == "":
+            # Replace spaces after the first one with '\n'
+            formatted_diffs.append(line[0] + re.sub(r' +', '\n', line[1:]))
+
+    return formatted_diffs
 
 @contract_router.post("/langgraph/magicEdit")
 def langgraph_contract_agent(edit_input: EditInput):
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0,
-        max_tokens=None,
-        max_retries=1,
-        api_key=settings.OPENAI_SECRET_KEY
-    )
+    print("Agreement: \n\n", edit_input.agreement)
 
-    # prompt = (f"You're a lawyer at the top law firm and your goal is, given a contractual document, and the corresponding "
-    #           "requested change, you need to go through the document and return the changes in a key-value format containing "
-    #           " the specific lines being changed in the text as original_text and the updated text as updated_text. "
-    #           "You can change as many lines as you'd like to ful fill the request changes but only return the key-value with original_text and updated_text"
-    #           ", nothing else. Only add text to the key-value where text is actually updated. "
-    #           " Change: {change} Document: {document}").format(change = edit_input.change, document = edit_input.document)
-    #
-    # response = llm.invoke(prompt)
-    # prompt_format = (f"Given this string, remove any of the entries that contain the same value for the original_text and the updated_text and "
-    #                  f"in the form of key value pairs of original_text and updated_text"
-    #                  f"Only return the key-value, don't need explanation."
-    #                  f"Dont' apply any format. Simply return as key-value pairs. String {response}")
+    updated_response = update_agreement({
+    "agreement_text": edit_input.agreement,
+    "prompt": edit_input.prompt
+    })
 
-    # formatted_response = llm.invoke(prompt_format)
+    ai_response = updated_response["response"]
+    original_agreement = ai_response.original_agreement_text
+    updated_agreement = ai_response.updated_agreement_text
+    update_summary = ai_response.update_summary
 
-    # return {"llmContent" : formatted_response.content}
-    return {"data" : [
-    {
-        "original_text": "James Joseph Rose",
-        "updated_text": "Amelia Hart Gold"
+    differences = find_differences(original_agreement, updated_agreement)
+
+    formatted_response = {
+        "updated_agreement": updated_agreement,
+        "update_summary": update_summary,
+        "differences": differences,
     }
-]
-}
+
+    return formatted_response
+
+
+

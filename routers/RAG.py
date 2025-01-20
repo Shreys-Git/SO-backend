@@ -1,18 +1,27 @@
-from fastapi import APIRouter
+import pprint
+import uuid
+from typing import List
+
+from fastapi import APIRouter, Query
 from huggingface_hub import InferenceClient
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
+from langchain_core.runnables import RunnablePassthrough
 from langchain_huggingface import HuggingFaceEndpointEmbeddings, HuggingFaceEndpoint
 from langchain_mongodb import MongoDBAtlasVectorSearch
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from pydantic import BaseModel
 from fastapi import Request
 from pymongo import MongoClient
 
 from config import BaseConfig
+from routers.mongo import load_documents, create_chunks_with_recursive_split
 from utils.vector_utils import get_embedding
+from bson.codec_options import CodecOptions
 
 rag_router = APIRouter()
 settings = BaseConfig()
@@ -75,6 +84,7 @@ async def chat_llm(request: Request):
 
 class UserChatMessage(BaseModel):
     message: str
+    agreement_id : List[str]
 
 @rag_router.post("/llm/chat")
 async def chat_llm(request: Request, use_chat_message: UserChatMessage):
@@ -128,9 +138,6 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     print("The AI Response is: " + output.choices[0].message.content)
     # Return results
     return {"AIResponse": output.choices[0].message.content}
-
-class UserChatMessage(BaseModel):
-    message: str
 
 @rag_router.post("/llm/chat")
 async def chat_llm(request: Request, use_chat_message: UserChatMessage):
@@ -254,7 +261,7 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     print("User Query is: " + input_query)
 
     # # One time set up for the Vector Store create
-    # folder_path = "./SampleAgreements/Sample Documents for Navigator/Others"
+    folder_path = "./SampleAgreements/Sample Documents for Navigator/Others"
     # docs = await load_documents(folder_path)
     # chunks = create_chunks_with_recursive_split(docs, 1000, 200)
 
@@ -359,3 +366,104 @@ async def chat_llm(request: Request, use_chat_message: UserChatMessage):
     )
 
     return {"response" : ai_msg}
+
+
+
+@rag_router.get("/llm/chat/v4")
+async def chat_llm(use_chat_message: UserChatMessage):
+    docs = await load_documents()
+    chunks = create_chunks_with_recursive_split(docs, 1000, 200)
+
+    # Access the collection
+    client = MongoClient(settings.DB_URL, uuidRepresentation="standard")
+    db_name = settings.DB_NAME
+    collection_name = "ShrsingCollection20012025"
+    collection = client[db_name][collection_name]
+
+    vector_search_index = "vector_index_20012025"
+
+    vector_store = MongoDBAtlasVectorSearch.from_documents(
+        documents=chunks,
+        embedding=OpenAIEmbeddings(api_key = settings.OPENAI_SECRET_KEY, disallowed_special=()),
+        collection=collection,
+        index_name=vector_search_index
+    )
+
+    vector_store.create_vector_search_index(
+        dimensions=1536,
+        filters=["document_id"]
+    )
+
+    return "success"
+
+@rag_router.get("/llm/chat/v4/search")
+async def chat_llm(use_chat_message: UserChatMessage):
+    # Access the collection
+    client = MongoClient(settings.DB_URL, uuidRepresentation="standard")
+    db_name = settings.DB_NAME
+    collection_name = "ShrsingCollection20012025"
+    collection = client[db_name][collection_name]
+
+    vector_search_index = "vector_index_20012025"
+
+    vector_store = MongoDBAtlasVectorSearch(
+        embedding=OpenAIEmbeddings(api_key = settings.OPENAI_SECRET_KEY, disallowed_special=()),
+        collection=collection,
+        index_name=vector_search_index,
+    )
+
+    results = vector_store.similarity_search_with_score(
+        query= use_chat_message.message,
+        k=3,
+        pre_filter={"document_id": {"$eq": uuid.UUID(use_chat_message.agreement_id[0])}}
+    )
+
+    # Instantiate Atlas Vector Search as a retriever
+    retriever = vector_store.as_retriever(
+        search_type="similarity",
+        search_kwargs={
+            "k": 10,
+            "score_threshold": 0.75,
+            "pre_filter": {"document_id": {"$eq": uuid.UUID(use_chat_message.agreement_id[0])}}
+        }
+    )
+
+    # Define a prompt template
+    template = """
+       Use the following pieces of context to answer the question at the end.
+       {context}
+       Question: {question}
+    """
+    prompt = PromptTemplate.from_template(template)
+
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0,
+        max_tokens=None,
+        max_retries=1,
+        api_key=settings.OPENAI_SECRET_KEY
+    )
+
+    # Construct a chain to answer questions on your data
+    chain = (
+            {"context": retriever, "question": RunnablePassthrough()}
+            | prompt
+            | llm
+            | StrOutputParser()
+    )
+
+    # Prompt the chain
+    answer = chain.invoke(use_chat_message.message)
+
+    print("Question: " + use_chat_message.message)
+    print("Answer: " + use_chat_message.message)
+
+    # Return source documents
+    documents = retriever.invoke(use_chat_message.message)
+    print("\nSource documents:")
+    pprint.pprint(documents)
+
+    return {"ai_response" : answer, "source_documents": documents}
+    # return results
+
+

@@ -93,8 +93,8 @@ async def callback(request: Request):
     # Temporary in-memory cache for the access token
     if "access_token" not in tokens:
         tokens["access_token"] = access_token
+    return RedirectResponse(url=f"http://localhost:5173")
 
-    return {"access_token": access_token}
 
 class FormData(BaseModel):
     name: str
@@ -311,4 +311,4 @@ async def fetch_agreements(agreement_id: str):
     if not nav_agreements:
         print("No agreements found or `data` key missing in response.")
 
-    return {"agreements": nav_agreements}
+    return nav_agreements
