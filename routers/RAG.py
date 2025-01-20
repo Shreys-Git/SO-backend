@@ -412,12 +412,6 @@ async def chat_llm(use_chat_message: UserChatMessage):
         index_name=vector_search_index,
     )
 
-    results = vector_store.similarity_search_with_score(
-        query= use_chat_message.message,
-        k=3,
-        pre_filter={"document_id": {"$eq": uuid.UUID(use_chat_message.agreement_id[0])}}
-    )
-
     # Instantiate Atlas Vector Search as a retriever
     retriever = vector_store.as_retriever(
         search_type="similarity",
@@ -428,13 +422,7 @@ async def chat_llm(use_chat_message: UserChatMessage):
         }
     )
 
-    # Define a prompt template
-    template = """
-       Use the following pieces of context to answer the question at the end.
-       {context}
-       Question: {question}
-    """
-    prompt = PromptTemplate.from_template(template)
+    # Process Chat history
 
     llm = ChatOpenAI(
         model="gpt-4o-mini",
@@ -444,26 +432,56 @@ async def chat_llm(use_chat_message: UserChatMessage):
         api_key=settings.OPENAI_SECRET_KEY
     )
 
-    # Construct a chain to answer questions on your data
-    chain = (
-            {"context": retriever, "question": RunnablePassthrough()}
-            | prompt
-            | llm
-            | StrOutputParser()
+    contextualize_q_system_prompt = (
+        "Given a chat history and the latest user question "
+        "which might reference context in the chat history, "
+        "formulate a standalone question which can be understood "
+        "without the chat history. Do NOT answer the question, "
+        "just reformulate it if needed and otherwise return it as is."
     )
 
-    # Prompt the chain
-    answer = chain.invoke(use_chat_message.message)
+    contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
 
-    print("Question: " + use_chat_message.message)
-    print("Answer: " + use_chat_message.message)
+    history_aware_retriever = create_history_aware_retriever(
+        llm, retriever, contextualize_q_prompt
+    )
 
-    # Return source documents
-    documents = retriever.invoke(use_chat_message.message)
-    print("\nSource documents:")
-    pprint.pprint(documents)
+    system_prompt = (
+        "You are an assistant for question-answering tasks. "
+        "Use the following pieces of retrieved context to answer "
+        "the question. If you don't know the answer, say that you "
+        "don't know. Use three sentences maximum and keep the "
+        "answer concise."
+        "\n\n"
+        "{context}"
+    )
 
-    return {"ai_response" : answer, "source_documents": documents}
-    # return results
+    qa_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ]
+    )
+
+    question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+
+    rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+
+    ai_msg = rag_chain.invoke({"input": use_chat_message.message, "chat_history": chat_history})
+    chat_history.extend(
+        [
+            HumanMessage(content=use_chat_message.message),
+            AIMessage(content=ai_msg["answer"]),
+        ]
+    )
+
+    return {"response": ai_msg}
 
 
