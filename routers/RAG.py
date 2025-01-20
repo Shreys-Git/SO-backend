@@ -21,12 +21,12 @@ from pymongo import MongoClient
 from config import BaseConfig
 from routers.mongo import load_documents, create_chunks_with_recursive_split
 from utils.vector_utils import get_embedding
+from langchain_mongodb.chat_message_histories import MongoDBChatMessageHistory
 from bson.codec_options import CodecOptions
 
 rag_router = APIRouter()
 settings = BaseConfig()
 
-chat_history =[]
 
 @rag_router.get("/llm/chat")
 async def chat_llm(request: Request):
@@ -85,6 +85,7 @@ async def chat_llm(request: Request):
 class UserChatMessage(BaseModel):
     message: str
     agreement_id : List[str]
+    additional_docs: List[str]
 
 @rag_router.post("/llm/chat")
 async def chat_llm(request: Request, use_chat_message: UserChatMessage):
@@ -422,8 +423,6 @@ async def chat_llm(use_chat_message: UserChatMessage):
         }
     )
 
-    # Process Chat history
-
     llm = ChatOpenAI(
         model="gpt-4o-mini",
         temperature=0,
@@ -474,13 +473,17 @@ async def chat_llm(use_chat_message: UserChatMessage):
 
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-    ai_msg = rag_chain.invoke({"input": use_chat_message.message, "chat_history": chat_history})
-    chat_history.extend(
-        [
-            HumanMessage(content=use_chat_message.message),
-            AIMessage(content=ai_msg["answer"]),
-        ]
+    chat_history = MongoDBChatMessageHistory(
+        session_id="1231234",  # Unique session identifier
+        connection_string=settings.DB_URL,  # Atlas cluster or local MongoDB instance URI
+        database_name=db_name,  # Database to store the chat history
+        collection_name="conversation_collection"  # Collection to store the chat history
     )
+
+    ai_msg = rag_chain.invoke({"input": use_chat_message.message, "chat_history": chat_history.messages})
+
+    chat_history.add_user_message(use_chat_message.message)
+    chat_history.add_ai_message(ai_msg["answer"])
 
     return {"response": ai_msg}
 
