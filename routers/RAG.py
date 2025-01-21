@@ -1,3 +1,4 @@
+import base64
 import pprint
 import uuid
 from typing import List
@@ -402,7 +403,7 @@ async def chat_llm():
 
     return "success"
 
-@rag_router.get("/llm/chat")
+@rag_router.post("/llm/chat")
 async def chat_llm(use_chat_message: UserChatMessage):
     # Access the collection
     client = MongoClient(settings.DB_URL, uuidRepresentation="standard")
@@ -425,6 +426,14 @@ async def chat_llm(use_chat_message: UserChatMessage):
         # Create Langchain Documents
         documents = []
         for doc in use_chat_message.additional_docs:
+            # # The file content might be base64 encoded with a data URL prefix (like "data:application/pdf;base64,")
+            # if doc.startswith('data:'):
+            #     # Remove the "data:<media-type>;base64," part
+            #     file_data = doc.split(",")[1]
+            #
+            # # Decode the base64 string
+            # doc = base64.b64decode(doc)
+
             document_id = uuid.uuid4()
             # Add the newly generated UUID for the document to the list of ids to search by
             use_chat_message.agreement_id.append(str(document_id))
