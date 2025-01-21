@@ -1,3 +1,4 @@
+import uuid
 from typing import List
 
 from fastapi import APIRouter
@@ -59,10 +60,13 @@ async def load_documents():
 
     # Load each PDF file and collect pages
     all_pages = []
+
     for file_path in pdf_files:
         loader = PyPDFLoader(str(file_path))
         pages = []
+        document_id = uuid.uuid4()
         async for page in loader.alazy_load():
+            page.metadata["document_id"] = document_id
             pages.append(page)
         all_pages.extend(pages)  # Add pages from this document to the overall list
 
