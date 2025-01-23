@@ -611,7 +611,6 @@ def generate_insight(state: InsightState):
 
 @contract_router.post("/langgraph/insights")
 async def langgraph_contract_agent(insight_input: InsightAgreement):
-    print("Agreement: \n\n", insight_input.agreement)
     report_state = {
         "number_of_queries" : 2,
         "tavily_topic" : "general",
