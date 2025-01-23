@@ -1,9 +1,9 @@
 import base64
 import pprint
 import uuid
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, UploadFile, Form, File
 from huggingface_hub import InferenceClient
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
@@ -20,6 +20,8 @@ from pydantic import BaseModel
 from fastapi import Request
 from pymongo import MongoClient
 from sqlalchemy.testing.suite.test_reflection import metadata
+from PyPDF2 import PdfReader
+import io
 
 from config import BaseConfig
 from routers.mongo import load_documents, create_chunks_with_recursive_split
@@ -374,7 +376,7 @@ settings = BaseConfig()
 class UserChatMessage(BaseModel):
     message: str
     agreement_id : List[str]
-    additional_docs: List[str]
+    additional_docs: List[UploadFile]
 
 @rag_router.get("/llm/chat/searchIndex")
 async def chat_llm():
@@ -403,8 +405,20 @@ async def chat_llm():
 
     return "success"
 
+
+def is_valid_uuid(string):
+    try:
+        uuid_obj = uuid.UUID(string, version=4)
+        return True
+    except ValueError:
+        return False
+
 @rag_router.post("/llm/chat")
-async def chat_llm(use_chat_message: UserChatMessage):
+async def chat_llm(message: str = Form(...), agreement_id: Optional[List[str]] = Form([]), additional_docs: Optional[List[UploadFile]] = File([])):
+    # Validate the agreement Ids
+    for current_id in agreement_id:
+        if not is_valid_uuid(current_id): return False
+
     # Access the collection
     client = MongoClient(settings.DB_URL, uuidRepresentation="standard")
     db_name = settings.DB_NAME
@@ -421,33 +435,26 @@ async def chat_llm(use_chat_message: UserChatMessage):
         index_name=vector_search_index,
     )
 
-    # If applicable, add additional reference docs to the vector store
-    if use_chat_message.additional_docs is not None and len(use_chat_message.additional_docs) != 0:
-        # Create Langchain Documents
-        documents = []
-        for doc in use_chat_message.additional_docs:
-            # # The file content might be base64 encoded with a data URL prefix (like "data:application/pdf;base64,")
-            # if doc.startswith('data:'):
-            #     # Remove the "data:<media-type>;base64," part
-            #     file_data = doc.split(",")[1]
-            #
-            # # Decode the base64 string
-            # doc = base64.b64decode(doc)
+    if additional_docs:
+        # Read text from the pdf and create Langchain Docs
+        docs = []
+        for doc in additional_docs:
+            file_content = await doc.read()
+            file_bytes = io.BytesIO(file_content)
+            pdf_reader = PdfReader(file_bytes)
 
             document_id = uuid.uuid4()
-            # Add the newly generated UUID for the document to the list of ids to search by
-            use_chat_message.agreement_id.append(str(document_id))
-            document = Document( page_content= doc, metadata = { "document_id" : document_id })
-            documents.append(document)
+            print("Generated doc id: " + str(document_id))
+            agreement_id.append(str(document_id))
+            for page in pdf_reader.pages:
+                text = page.extract_text()
+                page_doc = Document(page_content=text, metadata={"document_id": document_id})
+                docs.append(page_doc)
 
-        # Chunk docs (if applicable)
-        chunks = create_chunks_with_recursive_split(documents, 1000, 200)
-
+        # Chunk (if applicable)
+        chunks = create_chunks_with_recursive_split(docs, 1000, 200)
         # Add chunks to the Vector Store
         vector_store.add_documents(documents=chunks)
-
-
-
 
     # Instantiate Atlas Vector Search as a retriever
     retriever = vector_store.as_retriever(
@@ -455,9 +462,11 @@ async def chat_llm(use_chat_message: UserChatMessage):
         search_kwargs={
             "k": 10,
             "score_threshold": 0.75,
-            "pre_filter": {"document_id": {"$in": [uuid.UUID(id) for id in use_chat_message.agreement_id]}}
+            "pre_filter": {"document_id": {"$in": [uuid.UUID(id) for id in agreement_id]}}
         }
     )
+    print(agreement_id)
+    print( " Results: ", retriever.invoke(message))
 
     llm = ChatOpenAI(
         model="gpt-4o-mini",
@@ -510,17 +519,17 @@ async def chat_llm(use_chat_message: UserChatMessage):
     rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
     chat_history = MongoDBChatMessageHistory(
-        session_id="1231234",  # Unique session identifier
+        session_id="515555",  # Unique session identifier
         connection_string=settings.DB_URL,  # Atlas cluster or local MongoDB instance URI
         database_name=db_name,  # Database to store the chat history
         collection_name="conversation_collection"  # Collection to store the chat history
     )
 
-    ai_msg = rag_chain.invoke({"input": use_chat_message.message, "chat_history": chat_history.messages})
+    ai_msg = rag_chain.invoke({"input": message, "chat_history": chat_history.messages})
 
-    chat_history.add_user_message(use_chat_message.message)
+    chat_history.add_user_message(message)
     chat_history.add_ai_message(ai_msg["answer"])
 
-    return {"response": ai_msg}
+    return ai_msg
 
 
