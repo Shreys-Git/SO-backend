@@ -1,13 +1,17 @@
 import base64
+import json
 from collections import defaultdict
 from enum import Enum
+from typing import List
 
 import httpx
 from docusign_esign import ApiClient, TemplateRole, EnvelopeDefinition, EnvelopesApi
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from starlette.responses import RedirectResponse
 from fastapi import Request
+from starlette.websockets import WebSocketDisconnect, WebSocket
+
 from config import BaseConfig
 
 
@@ -17,6 +21,28 @@ settings = BaseConfig()
 tokens = {}
 agreements_cache = {}
 agreements_stats = defaultdict(int)
+
+# To track connected WebSocket clients
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except WebSocketDisconnect:
+                self.disconnect(connection)
+
+
+manager = ConnectionManager()
 
 class APIScope(Enum):
     ESIGNATURE = "signature"
@@ -312,3 +338,72 @@ async def fetch_agreements(agreement_id: str):
         print("No agreements found or `data` key missing in response.")
 
     return nav_agreements
+
+@docusign_router.post("/signature/webhook")
+async def signature_webhook(request: Request):
+    """
+        Webhook Listener: Handles incoming webhook events.
+        """
+    try:
+        # Parse JSON payload
+        payload = await request.json()
+
+        # Log the payload (for debugging)
+        print("Webhook received:", json.dumps(payload, indent=4))
+
+        # # Process the payload (custom logic goes here)
+        # # For example, extracting specific fields
+        # event_type = payload.get("event_type")
+        # data = payload.get("data")
+        #
+        # # Add your business logic based on the event type
+        # if event_type == "user.created":
+        #     print(f"New user created: {data}")
+        # elif event_type == "user.deleted":
+        #     print(f"User deleted: {data}")
+        # else:
+        #     print(f"Unhandled event type: {event_type}")
+        #
+        # # Respond to the webhook sender
+        # return {"status": "success", "message": "Webhook received and processed"}
+
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+    except Exception as e:
+        print(f"Error processing webhook: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+# WebSocket endpoint
+@docusign_router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+# Webhook endpoint to receive messages
+@docusign_router.post("/webhook")
+async def webhook_endpoint(message: dict):
+    if "event" not in message:
+        raise HTTPException(status_code=400, detail="Invalid payload: 'event' key is required")
+
+    # Extract the message from the payload
+    event = message["event"]
+    accountId = message["data"]["accountId"]
+    userId = message["data"]["userId"]
+    envelopeId = message["data"]["envelopeId"]
+
+    event_json = {
+        "event" : event,
+        "accountId": accountId,
+        "userId": userId,
+        "envelopeId": envelopeId
+    }
+
+    # Broadcast the message to all connected WebSocket clients
+    await manager.broadcast(str(event_json))
+
+    return {"status": "success", "message": f"Message broadcasted"}

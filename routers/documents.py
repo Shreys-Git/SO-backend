@@ -1,4 +1,5 @@
 import io
+import time
 import uuid
 from typing import List
 
@@ -103,7 +104,7 @@ async def documents_process(docs: List[UploadFile] = File([])):
     processed_docs = []
 
     # Access the collection
-    client = MongoClient(settings.DB_URL, uuidRepresentation="standard")
+    client = MongoClient(settings.DB_URL)
     db_name = settings.DB_NAME
     collection_name = "ShrsingCollection20012025"
     collection = client[db_name][collection_name]
@@ -123,9 +124,8 @@ async def documents_process(docs: List[UploadFile] = File([])):
         file_bytes = io.BytesIO(file_content)
         pdf_reader = PdfReader(file_bytes)
 
-        document_id = uuid.uuid4()
-        print("Generated doc id: " + str(document_id))
-        agreement_ids.append(str(document_id))
+        document_id = str(uuid.uuid4())
+        agreement_ids.append(document_id)
         for page in pdf_reader.pages:
             text = page.extract_text()
             page_doc = Document(page_content=text, metadata={"document_id": document_id})
@@ -135,6 +135,7 @@ async def documents_process(docs: List[UploadFile] = File([])):
     chunks = create_chunks_with_recursive_split(processed_docs, 1000, 200)
     # Add chunks to the Vector Store
     vector_store.add_documents(documents=chunks)
+    time.sleep(4)
 
     # Instantiate Atlas Vector Search as a retriever
     retriever = vector_store.as_retriever(
@@ -142,27 +143,28 @@ async def documents_process(docs: List[UploadFile] = File([])):
         search_kwargs={
             "k": 10,
             "score_threshold": 0.75,
-            "pre_filter": {"document_id": {"$in": [uuid.UUID(id) for id in agreement_ids]}}
+            "pre_filter": {"document_id": {"$in": agreement_ids}}
         }
     )
-
     vector_search_results = retriever.invoke("obligations")
 
-    return vector_search_results
+    extraction_builder = StateGraph(ExtractionState)
+    extraction_builder.add_node("extract_obligations", extract_obligations)
 
-    # extraction_builder = StateGraph(ExtractionState)
-    # extraction_builder.add_node("extract_obligations", extract_obligations)
-    #
-    # extraction_builder.add_edge(START, "extract_obligations")
-    # extraction_builder.add_edge("extract_obligations", END)
-    #
-    # extraction_graph = extraction_builder.compile()
-    # extractions = await extraction_graph.ainvoke({"vector_search": vector_search_results})
-    # # Insert documents into the database
-    # # Documents should be Document text + Relevant Context + Extractions
-    #
-    # result = collection.insert_many(extractions)
-    #
-    # # Return the inserted IDs
-    # return {"inserted_ids": [str(id) for id in result.inserted_ids]}
+    extraction_builder.add_edge(START, "extract_obligations")
+    extraction_builder.add_edge("extract_obligations", END)
+
+    extraction_graph = extraction_builder.compile()
+    extractions = await extraction_graph.ainvoke({"vector_search": vector_search_results})
+    print(extractions)
+    collection_name = "ObligationExtraction"
+    extraction_collection = client[db_name][collection_name]
+
+    if extractions and len(extractions) != 0:
+        obligations = extractions["extractions"].obligations
+        print("Inserting")
+        result = extraction_collection.insert_many([item.model_dump() for item in obligations])
+        # Return the inserted IDs
+        return extractions["extractions"]
+    return []
 
