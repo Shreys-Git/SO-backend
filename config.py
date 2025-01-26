@@ -11,6 +11,8 @@ class BaseConfig(BaseSettings):
     USERS_COLLECTION: Optional[str]
     VECTOR_SEARCH_COLLECTION: Optional[str]
     CONVERSATION_HISTORY_COLLECTION: Optional[str]
+    CALENDAR_COLLECTION: Optional[str]
+    TASKS_COLLECTION: Optional[str]
 
     # Docusign Configs
     INTEGRATION_KEY: Optional[str]

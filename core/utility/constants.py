@@ -12,4 +12,3 @@ class SignStatus(Enum):
     REVIEW = "REVIEW",
     SIGN = "SIGN",
     COMPLETED = "COMPLETED"
-
