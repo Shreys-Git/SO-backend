@@ -25,19 +25,44 @@ from schemas.users import User
 
 settings = BaseConfig()
 
-def get_access_code():
+async def get_access_code(code):
+    # Exchange the authorization code for an access token
+    TOKEN_URL = "https://account-d.docusign.com/oauth/token"
+    auth_key = f"{settings.INTEGRATION_KEY}:{settings.CLIENT_SECRET}"
+    encoded_auth = base64.b64encode(auth_key.encode("ascii")).decode("ascii")
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            TOKEN_URL,
+            headers={
+                "Authorization": f"Basic {encoded_auth}",
+                "Accept": "application/json"
+            },
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+            },
+        )
+        token_data = response.json()
+
+        return token_data
+
+    return {}
 
 def build_redirect_url(is_esign):
     scope = APIScope.ESIGNATURE
+    redirect_url = settings.SIGN_REDIRECT_URL
     if not is_esign:
         scope = APIScope.NAVIGATOR.value
+        redirect_url = settings.NAV_REDIRECT_URL
 
     # Redirect user to third-party authorization endpoint
     # TODO: set the base url as an env var (N.B: This is the dev-endpoint)
     AUTHORIZE_URL="https://account-d.docusign.com/oauth/auth"
+
     params = {
         "client_id": settings.INTEGRATION_KEY,
-        "redirect_uri": settings.REDIRECT_URL,
+        "redirect_uri": redirect_url,
         "scope": scope,  # Define the permissions you need
         "response_type": "code",
     }
@@ -47,7 +72,7 @@ def build_redirect_url(is_esign):
     print("The redirect-url is: " + redirect_url)
     return redirect_url
 
-async def fetch_agreements(agreement_id: str, tokens):
+async def fetch_agreements(agreement_id: str, nav_access_token):
     GET_ALL_NAV_AGREEMENTS_URL = f"https://api-d.docusign.com/v1/accounts/{settings.API_ACCOUNT_ID}/agreements"
 
     if agreement_id != "ALL":
@@ -60,7 +85,7 @@ async def fetch_agreements(agreement_id: str, tokens):
             response = await client.get(
                 GET_ALL_NAV_AGREEMENTS_URL,
                 headers={
-                    "Authorization": f"Bearer {tokens['access_token']}",
+                    "Authorization": f"Bearer {nav_access_token}",
                     "Accept": "application/json"
                 },
             )
@@ -80,20 +105,20 @@ async def fetch_agreements(agreement_id: str, tokens):
 
     return nav_agreements
 
-def get_envelope_status(envelope_id: str, tokens):
-    client = create_api_client(tokens)
+def get_envelope_status(envelope_id: str, sign_access_token: str):
+    client = create_api_client(sign_access_token)
     envelopes_api = EnvelopesApi(client)
     envelope = envelopes_api.get_envelope(settings.API_ACCOUNT_ID, envelope_id)
     return envelope.status
 
 
-def send_envelope(email: SignEmail, tokens):
+def send_envelope(email: SignEmail, sign_access_token):
     try:
         # 1. Create the envelope request object
         envelope_definition = make_envelope(email)
 
         # 2. Call Envelopes::create API method
-        api_client = create_api_client(tokens)
+        api_client = create_api_client(sign_access_token)
         envelope_api = EnvelopesApi(api_client)
         results = envelope_api.create_envelope(settings.API_ACCOUNT_ID, envelope_definition=envelope_definition)
         return results.envelope_id
@@ -151,34 +176,31 @@ def make_envelope(email: SignEmail):
 
     # Define CC users
     cc_offset = len(email.primary_users)
-    ccs = []
-    for index, cc_user in enumerate(email.cc_users):
-        cc = CarbonCopy(
-            email=cc_user.email,
-            name=f"{cc_user.first_name} {cc_user.last_name}",
-            recipient_id=str(index + cc_offset + 1),
-            routing_order=str(index + cc_offset + 1)
-        )
-        ccs.append(cc)
+    # ccs = []
+    # for index, cc_user in enumerate(email.cc_users):
+    #     cc = CarbonCopy(
+    #         email=cc_user.email,
+    #         name=f"{cc_user.first_name} {cc_user.last_name}",
+    #         recipient_id=str(index + cc_offset + 1),
+    #         routing_order=str(index + cc_offset + 1)
+    #     )
+    #     ccs.append(cc)
 
     # Create envelope definition
     envelope_definition = EnvelopeDefinition(
         email_subject=email.subject,
         status="sent",
         documents=[document],
-        recipients=Recipients(signers=signers, carbon_copies=ccs)
+        recipients=Recipients(signers=signers)
+        # recipients=Recipients(signers=signers, carbon_copies=ccs)
     )
 
     return envelope_definition
 
-def create_api_client(tokens):
-    access_token = tokens.get("access_token")
-    if not access_token:
-        raise ValueError("Access token is missing from tokens")
-
+def create_api_client(sign_access_token):
     api_client = ApiClient()
     api_client.host = settings.DEV_BASE_PATH
-    api_client.set_default_header(header_name="Authorization", header_value=f"Bearer {access_token}")
+    api_client.set_default_header(header_name="Authorization", header_value=f"Bearer {sign_access_token}")
     return api_client
 
 

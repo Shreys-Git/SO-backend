@@ -15,7 +15,7 @@ from core.llm.openai import llm
 from core.utility.constants import Versions, SignStatus
 from core.utility.helpers.documents import update_agreement, find_differences, generate_report_plan, generate_insight, \
     search_web, generate_queries, fetch_agreements, build_redirect_url, format_nav_extractions, send_envelope, \
-    get_envelope_status
+    get_envelope_status, get_access_code
 from routers.docusign import agreements_cache
 from schemas.documents import UserPrompt, EditInput, InsightState, InsightAgreement, Document, SignEmail
 
@@ -24,20 +24,10 @@ settings = BaseConfig()
 
 
 agreements_cache={}
-tokens={}
-
-@router.get("/sessions")
-async def set_sessions(request:Request):
-    request.session["test_token"] = "123451"
-    return "Session has been set"
-
-@router.get("/sessions/get")
-async def get_sessions(request:Request):
-    return request.session.get("test_token", "Token not found")
-
+tokens = {}
 
 @router.get("/files/{document_id}/{version}")
-async def fetch_mongo_docs(document_id: str, version: str):
+async def fetch_mongo_docs(request:Request, document_id: str, version: str):
     client = MongoClient(settings.DB_URL)
     db_name = settings.DB_NAME
     collection_name = settings.DOCUMENTS_COLLECTION
@@ -57,8 +47,35 @@ async def fetch_mongo_docs(document_id: str, version: str):
 
         result["document_text"] = re.sub(r'\\\\n', '\n', file_text)
 
-        status = get_envelope_status(result["signature_metadata"]["envelope_id"], tokens)
+        # Poll Docusign and update the Signing Status
+        envelope_id = result["signature_metadata"]["envelope_id"]
+        sign_status = result["signature_metadata"]["signature_status"]
+
+        status = SignStatus.REVIEW.name
+        if envelope_id and sign_status:
+            # If the Envelope has been sent for signing before, poll the status
+            envelope_status = get_envelope_status(result["signature_metadata"]["envelope_id"],
+                                                  tokens["sign_access_token"])
+            if envelope_status == SignStatus.COMPLETED.name.lower():
+                status = SignStatus.COMPLETED.name
+            else:
+                status = SignStatus.REVIEW.name
+
         result["signature_metadata"]["signature_status"] = status
+
+        signature_metadata = {
+            "envelope_id": result["signature_metadata"]["envelope_id"],
+            "signature_status": result["signature_metadata"]["signature_status"]
+        }
+        collection.update_one(
+            {"document_id": document_id},
+            {
+                "$set": {
+                    "signature_metadata": signature_metadata
+                },
+            }
+        )
+
         return result
     else:
         results = list(collection.find({}, {"_id": 0}))
@@ -66,12 +83,37 @@ async def fetch_mongo_docs(document_id: str, version: str):
             # Update the document
             file_text = result["document_text"]
             if version != Versions.LATEST.name:
-                file_text = result["versions"][int(version)-1]
+                file_text = result["versions"][int(version) - 1]
 
             result["document_text"] = re.sub(r'\\\\n', '\n', file_text)
 
-            status = get_envelope_status(result["signature_metadata"]["envelope_id"], tokens)
+            # Poll Docusign and update the Signing Status
+            envelope_id = result["signature_metadata"]["envelope_id"]
+            sign_status = result["signature_metadata"]["signature_status"]
+
+            status = SignStatus.REVIEW.name
+            if envelope_id and sign_status:
+                # If the Envelope has been sent for signing before, poll the status
+                envelope_status = get_envelope_status(result["signature_metadata"]["envelope_id"], tokens["sign_access_token"])
+                if envelope_status == SignStatus.COMPLETED.name.lower():
+                    status = SignStatus.COMPLETED.name
+                else:
+                    status = SignStatus.REVIEW.name
+
             result["signature_metadata"]["signature_status"] = status
+
+            signature_metadata = {
+                "envelope_id": result["signature_metadata"]["envelope_id"],
+                "signature_status": result["signature_metadata"]["signature_status"]
+            }
+            collection.update_one(
+                {"document_id": document_id},
+                {
+                    "$set": {
+                        "signature_metadata": signature_metadata
+                    },
+                }
+            )
 
         return results
 
@@ -128,7 +170,7 @@ async def get_nav_access_token():
     # TODO: Combine the two endpoints later & send a query param to tell which access token is needed
     return RedirectResponse(url=build_redirect_url(False))
 
-@router.get("/callback")
+@router.get("/docusign/callback")
 async def callback(request: Request):
     # Extract the authorization code from the URL
     code = request.query_params.get("code")
@@ -137,24 +179,7 @@ async def callback(request: Request):
     else:
         print("Received Code " + code)
 
-    # Exchange the authorization code for an access token
-    TOKEN_URL = "https://account-d.docusign.com/oauth/token"
-    auth_key = f"{settings.INTEGRATION_KEY}:{settings.CLIENT_SECRET}"
-    encoded_auth = base64.b64encode(auth_key.encode("ascii")).decode("ascii")
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            TOKEN_URL,
-            headers={
-                "Authorization": f"Basic {encoded_auth}",
-                "Accept": "application/json"
-            },
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-            },
-        )
-        token_data = response.json()
+    token_data = await get_access_code(code)
 
     # Extract and return the access token
     access_token = token_data.get("access_token")
@@ -164,17 +189,41 @@ async def callback(request: Request):
         print("Got the final access_token")
 
     # Cache the token in session
-    request.session["access_token"] = access_token
+    tokens["sign_access_token"] = access_token
+    print(tokens)
+    return RedirectResponse(url=f"http://localhost:5173/documents/files")
+
+@router.get("/callback")
+async def callback(request: Request):
+    # Extract the authorization code from the URL
+    code = request.query_params.get("code")
+    if not code:
+        return {"error": "No code returned"}
+    else:
+        print("Received Code " )
+
+    token_data = await get_access_code(code)
+
+    # Extract and return the access token
+    access_token = token_data.get("access_token")
+    if not access_token:
+        return {"error": "Could not retrieve access token"}
+    else:
+        print("Got the final access_token" )
+
+    # Cache the token in session
+    tokens["nav_access_token"] = access_token
+    print(tokens)
     return RedirectResponse(url=f"http://localhost:5173/documents/files")
 
 @router.post("/sign")
-def form_submit(email: SignEmail):
+def form_submit(request: Request, email: SignEmail):
     client = MongoClient(settings.DB_URL)
     db_name = settings.DB_NAME
     collection_name = settings.DOCUMENTS_COLLECTION
     collection = client[db_name][collection_name]
 
-    envelope_id = send_envelope(email, tokens)
+    envelope_id = send_envelope(email, tokens["sign_access_token"])
     signature_metadata = {
         "envelope_id": envelope_id,
         "signature_status": SignStatus.SIGN.name
@@ -186,9 +235,9 @@ def form_submit(email: SignEmail):
     return {"envelope_id": envelope_id}
 
 @router.get("/navigator/{agreement_id}")
-async def get_nav_agreements(agreement_id: str = None):
-    #TODO: Don't fetch the doc before checking the cache -> Stale cache ? (Only fixed amt of docs in the Nav Docs)
-    agreements = await fetch_agreements(agreement_id, tokens)
+async def get_nav_agreements(request: Request, agreement_id: str = None):
+    print("Test Print: ", tokens["nav_access_token"])
+    agreements = await fetch_agreements(agreement_id, tokens["nav_access_token"])
     if "agreements" not in agreements_cache:
         agreements_cache["agreements"] = agreements
     return agreements
@@ -265,7 +314,7 @@ N.B: Needs the user to be logged in
 '''
 @router.get("/db/setup")
 async def process_nav_agreements(request: Request):
-    agreements_response = await fetch_agreements("ALL", tokens)
+    agreements_response = await fetch_agreements("ALL", tokens["nav_access_token"])
     agreements = format_nav_extractions(agreements_response)
 
     # Insert documents into the database

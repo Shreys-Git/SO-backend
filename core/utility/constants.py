@@ -11,5 +11,5 @@ class Versions(Enum):
 class SignStatus(Enum):
     REVIEW = "REVIEW",
     SIGN = "SIGN",
-    FINALISED = "FINALISED"
+    COMPLETED = "COMPLETED"
 

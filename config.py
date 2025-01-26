@@ -13,7 +13,8 @@ class BaseConfig(BaseSettings):
     # Docusign Configs
     INTEGRATION_KEY: Optional[str]
     CLIENT_SECRET: Optional[str]
-    REDIRECT_URL: Optional[str]
+    SIGN_REDIRECT_URL: Optional[str]
+    NAV_REDIRECT_URL: Optional[str]
     DEV_BASE_PATH: Optional[str]
     API_ACCOUNT_ID: Optional[str]
     TEMPLATE_ID: Optional[str]
