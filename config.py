@@ -9,6 +9,8 @@ class BaseConfig(BaseSettings):
     NAV_COLLECTION_NAME: Optional[str]
     DOCUMENTS_COLLECTION: Optional[str]
     USERS_COLLECTION: Optional[str]
+    VECTOR_SEARCH_COLLECTION: Optional[str]
+    CONVERSATION_HISTORY_COLLECTION: Optional[str]
 
     # Docusign Configs
     INTEGRATION_KEY: Optional[str]

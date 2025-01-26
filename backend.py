@@ -13,6 +13,7 @@ from routers.mongo import router as mongo_router
 from routers.docusign import docusign_router
 from api.v1.endpoints.documents import router as documents_router_v1
 from api.v1.endpoints.users import router as users_router
+from api.v1.endpoints.converse import router as converse_router
 from config import BaseConfig
 
 settings = BaseConfig()
@@ -53,3 +54,4 @@ app.include_router(contract_router, prefix="/contract", tags=["contract"])
 app.include_router(documents_router, prefix="/documents", tags=["documents"])
 app.include_router(documents_router_v1, prefix="/v1/documents")
 app.include_router(users_router, prefix="/v1/users")
+app.include_router(converse_router, prefix="/v1/converse")
