@@ -12,12 +12,12 @@ from starlette.responses import RedirectResponse
 
 from config import BaseConfig
 from core.llm.openai import llm
-from core.utility.constants import Versions
+from core.utility.constants import Versions, SignStatus
 from core.utility.helpers.documents import update_agreement, find_differences, generate_report_plan, generate_insight, \
-    search_web, generate_queries, fetch_agreements, build_redirect_url, format_nav_extractions, send_envelope
+    search_web, generate_queries, fetch_agreements, build_redirect_url, format_nav_extractions, send_envelope, \
+    get_envelope_status
 from routers.docusign import agreements_cache
 from schemas.documents import UserPrompt, EditInput, InsightState, InsightAgreement, Document, SignEmail
-from schemas.users import User
 
 router = APIRouter()
 settings = BaseConfig()
@@ -26,24 +26,54 @@ settings = BaseConfig()
 agreements_cache={}
 tokens={}
 
+@router.get("/sessions")
+async def set_sessions(request:Request):
+    request.session["test_token"] = "123451"
+    return "Session has been set"
+
+@router.get("/sessions/get")
+async def get_sessions(request:Request):
+    return request.session.get("test_token", "Token not found")
+
 
 @router.get("/files/{document_id}/{version}")
 async def fetch_mongo_docs(document_id: str, version: str):
-    search_query = {
-        "document_id": document_id,
-    }
-
     client = MongoClient(settings.DB_URL)
     db_name = settings.DB_NAME
     collection_name = settings.DOCUMENTS_COLLECTION
     collection = client[db_name][collection_name]
 
-    result = collection.find_one(search_query)
-    file_text = result["document_text"]
-    if version != Versions.LATEST.name:
-        file_text = result["versions"][int(version)-1]
+    if document_id != "ALL":
+        search_query = {
+            "document_id": document_id,
+        }
 
-    return re.sub(r'\\\\n', '\n', file_text)
+        result = collection.find_one(search_query, {"_id": 0})
+
+        # Update the document
+        file_text = result["document_text"]
+        if version != Versions.LATEST.name:
+            file_text = result["versions"][int(version)-1]
+
+        result["document_text"] = re.sub(r'\\\\n', '\n', file_text)
+
+        status = get_envelope_status(result["signature_metadata"]["envelope_id"], tokens)
+        result["signature_metadata"]["signature_status"] = status
+        return result
+    else:
+        results = list(collection.find({}, {"_id": 0}))
+        for result in results:
+            # Update the document
+            file_text = result["document_text"]
+            if version != Versions.LATEST.name:
+                file_text = result["versions"][int(version)-1]
+
+            result["document_text"] = re.sub(r'\\\\n', '\n', file_text)
+
+            status = get_envelope_status(result["signature_metadata"]["envelope_id"], tokens)
+            result["signature_metadata"]["signature_status"] = status
+
+        return results
 
 
 @router.post("/files/{document_id}")
@@ -133,15 +163,26 @@ async def callback(request: Request):
     else:
         print("Got the final access_token")
 
-    # Temporary in-memory cache for the access token
-    if "access_token" not in tokens:
-        tokens["access_token"] = access_token
-    return RedirectResponse(url=f"http://localhost:5173")
+    # Cache the token in session
+    request.session["access_token"] = access_token
+    return RedirectResponse(url=f"http://localhost:5173/documents/files")
 
 @router.post("/sign")
 def form_submit(email: SignEmail):
-    print(str(email))
+    client = MongoClient(settings.DB_URL)
+    db_name = settings.DB_NAME
+    collection_name = settings.DOCUMENTS_COLLECTION
+    collection = client[db_name][collection_name]
+
     envelope_id = send_envelope(email, tokens)
+    signature_metadata = {
+        "envelope_id": envelope_id,
+        "signature_status": SignStatus.SIGN.name
+    }
+    collection.update_one(
+        {"document_id": email.document_id},
+        {"$set": {"signature_metadata": signature_metadata}}
+    )
     return {"envelope_id": envelope_id}
 
 @router.get("/navigator/{agreement_id}")

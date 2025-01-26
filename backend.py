@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from motor import motor_asyncio
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+
 from routers.RAG import rag_router
 from routers.contract import contract_router
 from routers.documents import documents_router
@@ -39,6 +41,8 @@ app.add_middleware(
     allow_credentials = True,
     allow_methods = ["*"]
 )
+
+app.add_middleware(SessionMiddleware, secret_key="secret-key")
 
 app.include_router(mongo_router, prefix="/mongo", tags =["mongo"])
 app.include_router(docusign_router, prefix="/docusign", tags=["docusign"])

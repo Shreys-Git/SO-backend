@@ -8,3 +8,8 @@ class APIScope(Enum):
 class Versions(Enum):
     LATEST = -1
 
+class SignStatus(Enum):
+    REVIEW = "REVIEW",
+    SIGN = "SIGN",
+    FINALISED = "FINALISED"
+

@@ -7,6 +7,7 @@ from schemas.users import User
 
 
 class SignEmail(BaseModel):
+    document_id: str
     subject: str
     file_name: str
     file_content: str

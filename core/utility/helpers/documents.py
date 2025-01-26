@@ -16,7 +16,7 @@ from tavily import AsyncTavilyClient
 
 from config import BaseConfig
 from core.llm.openai import llm
-from core.utility.constants import APIScope
+from core.utility.constants import APIScope, SignStatus
 from core.utility.prompts.documents import magic_edit_instructions, insight_extraction_instructions, \
     report_planner_query_writer_instructions, report_planner_instructions, insight_writer_instructions, \
     query_writer_instructions
@@ -24,6 +24,8 @@ from schemas.documents import SectionState, AIEdit, ReportState, Extractions, Qu
 from schemas.users import User
 
 settings = BaseConfig()
+
+def get_access_code():
 
 def build_redirect_url(is_esign):
     scope = APIScope.ESIGNATURE
@@ -77,6 +79,13 @@ async def fetch_agreements(agreement_id: str, tokens):
         print("No agreements found or `data` key missing in response.")
 
     return nav_agreements
+
+def get_envelope_status(envelope_id: str, tokens):
+    client = create_api_client(tokens)
+    envelopes_api = EnvelopesApi(client)
+    envelope = envelopes_api.get_envelope(settings.API_ACCOUNT_ID, envelope_id)
+    return envelope.status
+
 
 def send_envelope(email: SignEmail, tokens):
     try:
@@ -401,6 +410,7 @@ def format_nav_extractions(nav_extractions: List):
             "document_text": get_document_text(extraction["file_name"]),
             "navigator_extractions": extraction,
             "obligations": [],
+            "signature_metadata": {"envelope_id": "", "signature_status": SignStatus.REVIEW.name},
             "clauses": [],
             "versions": [get_document_text(extraction["file_name"])]
         }
