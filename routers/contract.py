@@ -356,7 +356,7 @@ def tavily_search(query):
                 - url (str): URL of the search result
                 - content (str): Snippet/summary of the content
                 - raw_content (str): Full content of the page if available"""
-    tavily_client = TavilyClient(api_key="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")
+    tavily_client = TavilyClient(api_key=settings.TAVILY_API_KEY)
     return tavily_client.search(query,
                          max_results=5,
                          include_raw_content=True)

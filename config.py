@@ -7,6 +7,8 @@ class BaseConfig(BaseSettings):
     DB_NAME: Optional[str]
     VECTOR_COLLECTION_NAME: Optional[str]
     NAV_COLLECTION_NAME: Optional[str]
+    DOCUMENTS_COLLECTION: Optional[str]
+    USERS_COLLECTION: Optional[str]
 
     # Docusign Configs
     INTEGRATION_KEY: Optional[str]
