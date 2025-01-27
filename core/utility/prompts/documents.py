@@ -6,6 +6,9 @@ Change Instructions:
 Legal Agreement:
 {agreement}
 
+Consider the following metadata on the document, use if applicable
+{provisions}
+
 Guidelines for writing:
 
 1. Technical Accuracy:

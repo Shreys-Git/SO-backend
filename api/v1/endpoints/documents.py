@@ -14,6 +14,7 @@ from core.utility.constants import Versions, SignStatus
 from core.utility.helpers.documents import update_agreement, find_differences, generate_report_plan, generate_insight, \
     search_web, generate_queries, fetch_agreements, build_redirect_url, format_nav_extractions, send_envelope, \
     get_envelope_status, get_access_code
+from db.database import documents
 from routers.docusign import agreements_cache
 from schemas.documents import UserPrompt, EditInput, InsightState, InsightAgreement, Document, SignEmail
 
@@ -250,17 +251,21 @@ def langgraph_contract_agent(user_prompt: UserPrompt):
 
 @router.post("/magicEdit")
 def langgraph_contract_agent(edit_input: EditInput):
-    print("Agreement: \n\n", edit_input.agreement)
+    # Fetch the NAV API's metadata on the document
+    reference_doc = documents.find_one({"document_id": edit_input.document_id}, {"_id": 0})
 
-    updated_response = update_agreement({
+    input_state = {
     "agreement_text": edit_input.agreement,
-    "prompt": edit_input.prompt
-    })
+    "prompt": edit_input.prompt,
+    "provisions": str(reference_doc.get("navigator_extractions", {}).get("provisions", {}))
+    }
 
-    ai_response = updated_response["response"]
+    ai_response = update_agreement(input_state)["response"]
     original_agreement = ai_response.original_agreement_text
     updated_agreement = ai_response.updated_agreement_text
     update_summary = ai_response.update_summary
+
+
 
     differences = find_differences(original_agreement, updated_agreement)
 

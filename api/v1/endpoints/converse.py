@@ -62,7 +62,7 @@ async def upload_additional_docs(additional_docs: List[UploadFile] = File([])):
 
     # Sleep, so that the MongoDB can initialize the Index,
     # should ideally query Mongo to check the status / webhook it - but ran out of time : )
-    time.sleep(5)
+    time.sleep(3)
     return document_ids
 
 @router.post("/rag")

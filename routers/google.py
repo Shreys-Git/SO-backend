@@ -11,7 +11,7 @@ google_router = APIRouter()
 settings = BaseConfig()
 
 @google_router.get("/google/calendar")
-async def add_tasks_to_google_calendar():
+async def add_event_to_google_calendar():
     SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
     google_auth_config = {

@@ -203,6 +203,38 @@ def create_api_client(sign_access_token):
     api_client.set_default_header(header_name="Authorization", header_value=f"Bearer {sign_access_token}")
     return api_client
 
+def split_string_by_limit(input_string, char_limit):
+    """
+    Splits a string into a list of substrings, each with a length not exceeding the given character limit.
+
+    Args:
+        input_string (str): The input string to be split.
+        char_limit (int): The maximum number of characters for each substring.
+
+    Returns:
+        list: A list of substrings.
+    """
+    if char_limit <= 0:
+        raise ValueError("Character limit must be greater than 0.")
+
+    words = input_string.split()
+    result = []
+    current_line = ""
+
+    for word in words:
+        # If adding the next word exceeds the limit, store the current line and start a new one
+        if len(current_line) + len(word) + (1 if current_line else 0) > char_limit:
+            result.append(current_line)
+            current_line = word
+        else:
+            # Add the word to the current line
+            current_line += (" " if current_line else "") + word
+
+    # Add the last line if it exists
+    if current_line:
+        result.append(current_line)
+
+    return result
 
 def update_agreement(state: SectionState):
     """ Update a section of the report """
@@ -210,9 +242,10 @@ def update_agreement(state: SectionState):
     # Get state
     agreement = state["agreement_text"]
     prompt = state["prompt"]
+    provisions = state["provisions"]
 
     # Format system instructions
-    system_instructions = magic_edit_instructions.format(prompt=prompt, agreement=agreement)
+    system_instructions = magic_edit_instructions.format(prompt=prompt, agreement=agreement, provisions=provisions)
 
     # Update section
     section_content = llm.with_structured_output(AIEdit).invoke([SystemMessage(content=system_instructions)]+[HumanMessage(content="Update the given documents based on the provided input")])

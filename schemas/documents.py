@@ -24,10 +24,11 @@ class Document(BaseModel):
 class EditInput(BaseModel):
     prompt: str
     agreement: str
+    document_id: str
 
 class AIEdit(BaseModel):
   original_agreement_text: str = Field(
-        description="Contains the exact original legal agreememt provided by the user",
+        description="Contains the exact original legal agreement provided by the user",
     )
   updated_agreement_text: str = Field(
         description="Contains the updated response",
@@ -40,6 +41,7 @@ class SectionState(TypedDict):
     section: AIEdit
     prompt: str
     agreement_text: str
+    provisions: str
     updated_agreement_text: str
 
 class Insight(BaseModel):
