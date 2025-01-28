@@ -13,8 +13,7 @@ from config import BaseConfig
 from core.utility.helpers.calender import extract_obligations
 from core.utility.helpers.common import process_all_nav_documents
 from db.database import calendar, documents
-from routers.documents import ExtractionState
-from schemas.calender import Event
+from schemas.calender import Event, ExtractionState
 
 router = APIRouter()
 settings = BaseConfig()
