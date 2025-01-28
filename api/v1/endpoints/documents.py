@@ -15,7 +15,6 @@ from core.utility.helpers.documents import update_agreement, find_differences, g
     search_web, generate_queries, fetch_agreements, build_redirect_url, format_nav_extractions, send_envelope, \
     get_envelope_status, get_access_code
 from db.database import documents
-from routers.docusign import agreements_cache
 from schemas.documents import UserPrompt, EditInput, InsightState, InsightAgreement, Document, SignEmail
 
 router = APIRouter()
